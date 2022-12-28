@@ -55,34 +55,36 @@ int loginCheck(char username[1024], char password[1024]) {
             continue;
         }
         c = 1;
-        if (!strcmp(username, usernamePresente))
+        if (!strcmp(username, usernamePresente)) {
             fscanf(fptr, "%s", passwordPresente);
-        if (!strcmp(password, passwordPresente)) {
-            printf("login eseguito con successo\n");
+            if (!strcmp(password, passwordPresente)) {
+                printf("login eseguito con successo\n");
                 return 0;
+            }
+            else {
+                printf("login fallito\n"); // esiste un solo utente con tale username, quindi se non è corretta questa password non controllo altri
+                return 1;
+            }
         }
-        printf("login fallito\n"); // esiste un solo utente con tale username, quindi se non è corretta questa password non controllo altri
-        return 1;
     }
     fclose(fptr);
     printf("username non presente\n");
     return 1;
 }
 
-void login(new_sd) {
+void login(sd) {
     char username[1024];
     char password[1024];
-    printf("arrivato\n");
-    recvMsg(new_sd, username);
-    recvMsg(new_sd, password);
+    recvMsg(sd, username);
+    recvMsg(sd, password);
     loginCheck(username, password);
 }
 
-void signup(new_sd) {
+void signup(sd) {
     char username[1024];
     char password[1024];
-    recvMsg(new_sd, username);
-    recvMsg(new_sd, password);
+    recvMsg(sd, username);
+    recvMsg(sd, password);
     if (signupControl(username)) {
         printf("username presente\n");
         return;
@@ -90,12 +92,35 @@ void signup(new_sd) {
     signupInsert(username, password);
 }
 
-int main() {
-    int ret, sd, new_sd, len;
-    struct sockaddr_in my_addr, cl_addr;
+int recvCommand(int sd) {
+    int command;
+    command = recvNum(sd);
+    switch (command) {
+    case 1:
+        printf("comando ricevuto: signup\n");
+        sendNum(sd, 0);
+        signup(sd);
+        break;
+    case 2:
+        printf("comando ricevuto: in\n");
+        sendNum(sd, 0);
+        login(sd);
+        break;
+    default:
+        printf("unknown command\n");
+        sendNum(sd, 1);
+        return -1;
+    }
+    return 0;
+}
+
+int creaSocket() {
+    int ret, sd;
+    struct sockaddr_in my_addr;
     char buffer[1024];
     /* Creazione socket */
     sd = socket(AF_INET, SOCK_STREAM, 0);
+    setsockopt(sd, SOL_SOCKET, SO_REUSEADDR, &(int){1}, sizeof(int));
     /* Creazione indirizzo di bind */
     memset(&my_addr, 0, sizeof(my_addr)); // Pulizia 
     my_addr.sin_family = AF_INET;
@@ -103,6 +128,13 @@ int main() {
     my_addr.sin_addr.s_addr = INADDR_ANY;
 
     ret = bind(sd, (struct sockaddr*)&my_addr, sizeof(my_addr));
+    return sd;
+}
+
+int main() {
+    struct sockaddr_in cl_addr;
+    int ret, sd, new_sd, len;
+    sd = creaSocket();
     ret = listen(sd, 10);
     if (ret < 0) {
         perror("Errore in fase di bind: \n");
@@ -116,8 +148,7 @@ int main() {
 
         // Attendo risposta
         len = MESSAGE_LEN;
-        login(new_sd);
-
+        recvCommand(new_sd);
         if (ret < 0) {
             perror("Errore in fase di ricezione: \n");
             continue;
