@@ -46,8 +46,14 @@ void signup() {
     sendMsg(sd, buffer);
 }
 
-void in(){
+void in() {
+    int sd = creaSocket();
+    char buffer[1024];
 
+    scanf("%s", buffer);
+    sendMsg(sd, buffer);
+    scanf("%s", buffer);
+    sendMsg(sd, buffer);
 }
 
 int main(int argc, char* argv[]) {
@@ -67,6 +73,7 @@ int main(int argc, char* argv[]) {
         }
 
         if (!strcmp(command, "in")) {
+            printf("ok\n");
             in();
             break;
         }
@@ -76,25 +83,5 @@ int main(int argc, char* argv[]) {
 
     len = MESSAGE_LEN;
 
-    while (1) {
-
-        // Attendo input da tastiera
-        // Attendo risposta
-        //ret = recv(sd, (void*)buffer, len, 0);
-
-        if (ret < 0) {
-            perror("Errore in fase di ricezione: \n");
-            exit(-1);
-        }
-
-
-    }
-
     close(sd);
-
 }
-
-
-
-
-

@@ -12,9 +12,83 @@
 
 #define MESSAGE_LEN 20 // Lunghezza del messaggio dal client
 
-struct device{
+struct device {
 
 };
+
+void signupInsert(char username[1024], char password[1024]) {
+    FILE* fptr;
+    fptr = fopen("autenticazione.txt", "a");
+    fprintf(fptr, "%s ", username);
+    fprintf(fptr, "%s\n", password);
+    fclose(fptr);
+}
+
+int signupControl(char username[1024]) {
+    FILE* fptr;
+    int c = 0;
+    char usernamePresente[1024];
+    fptr = fopen("autenticazione.txt", "r");
+    while (fscanf(fptr, "%s", usernamePresente) != EOF) {
+        if (c == 1) { // mi assicura di star controllando l'username e non la pswx
+            c = 0;
+            continue;
+        }
+        c = 1;
+        if (!strcmp(username, usernamePresente))
+            return 1;
+
+    }
+    fclose(fptr);
+    return 0;
+}
+
+int loginCheck(char username[1024], char password[1024]) {
+    FILE* fptr;
+    int c = 0;
+    char usernamePresente[1024];
+    char passwordPresente[1024];
+    fptr = fopen("autenticazione.txt", "r");
+    while (fscanf(fptr, "%s", usernamePresente) != EOF) {
+        if (c == 1) { // mi assicura di star controllando l'username e non la pswx
+            c = 0;
+            continue;
+        }
+        c = 1;
+        if (!strcmp(username, usernamePresente))
+            fscanf(fptr, "%s", passwordPresente);
+        if (!strcmp(password, passwordPresente)) {
+            printf("login eseguito con successo\n");
+                return 0;
+        }
+        printf("login fallito\n"); // esiste un solo utente con tale username, quindi se non è corretta questa password non controllo altri
+        return 1;
+    }
+    fclose(fptr);
+    printf("username non presente\n");
+    return 1;
+}
+
+void login(new_sd) {
+    char username[1024];
+    char password[1024];
+    printf("arrivato\n");
+    recvMsg(new_sd, username);
+    recvMsg(new_sd, password);
+    loginCheck(username, password);
+}
+
+void signup(new_sd) {
+    char username[1024];
+    char password[1024];
+    recvMsg(new_sd, username);
+    recvMsg(new_sd, password);
+    if (signupControl(username)) {
+        printf("username presente\n");
+        return;
+    }
+    signupInsert(username, password);
+}
 
 int main() {
     int ret, sd, new_sd, len;
@@ -39,30 +113,27 @@ int main() {
 
         // Accetto nuove connessioni
         new_sd = accept(sd, (struct sockaddr*)&cl_addr, &len);
-        while (1) {
 
-            // Attendo risposta
-            len = MESSAGE_LEN;
-            ret = recvMsg(new_sd, buffer);
+        // Attendo risposta
+        len = MESSAGE_LEN;
+        login(new_sd);
 
-            if (ret < 0) {
-                perror("Errore in fase di ricezione: \n");
-                continue;
-            }
+        if (ret < 0) {
+            perror("Errore in fase di ricezione: \n");
+            continue;
+        }
 
-            // Posso fare strmcp perché invio anche il fine stringa '\0'
-            // Invio sempre sul socket 20 byte!
-            if (strcmp(buffer, "bye") == 0) {
-                close(new_sd);
-                break;
-            }
-            printf("mmm%s\n", buffer);
-            // Invio risposta
-            //ret = send(new_sd, (void*)buffer, len, 0);
+        // Posso fare strmcp perché invio anche il fine stringa '\0'
+        // Invio sempre sul socket 20 byte!
+        /*if (strcmp(buffer, "bye") == 0) {
+            close(new_sd);
+            break;
+        }*/
+        // Invio risposta
+        //ret = send(new_sd, (void*)buffer, len, 0);
 
-            if (ret < 0) {
-                perror("Errore in fase di invio: \n");
-            }
+        if (ret < 0) {
+            perror("Errore in fase di invio: \n");
         }
     }
 }
