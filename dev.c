@@ -13,18 +13,18 @@
 
 #define MESSAGE_LEN 20 // Lunghezza del messaggio dal client
 
-int creaSocket() {
+int creaSocket(srvPort) {
     int ret, sd, len;
     struct sockaddr_in srv_addr;
 
 
     /* Creazione socket */
     sd = socket(AF_INET, SOCK_STREAM, 0);
-
+    setsockopt(sd, SOL_SOCKET, SO_REUSEADDR, &(int){1}, sizeof(int));
     /* Creazione indirizzo del server */
     memset(&srv_addr, 0, sizeof(srv_addr)); // Pulizia 
     srv_addr.sin_family = AF_INET;
-    srv_addr.sin_port = htons(4242);
+    srv_addr.sin_port = htons(srvPort);
     inet_pton(AF_INET, "127.0.0.1", &srv_addr.sin_addr);
 
     ret = connect(sd, (struct sockaddr*)&srv_addr, sizeof(srv_addr));
@@ -36,20 +36,34 @@ int creaSocket() {
     return sd;
 }
 
-void signup() {
-    int sd = creaSocket();
-    char buffer[1024];
+int commandHandshake(int sd, int command) {
+    int num;
+    sendNum(sd, command);
+    if (!recvNum(sd)) {
+        printf("handshake andato a buon fine\n");
+        return 0;
+    }
+    else {
+        printf("handshake fallito\n");
+        return 1;
+    }
+}
 
+void signup(srvPort) {
+    int sd = creaSocket(srvPort);
+    commandHandshake(sd, 1);
+    char buffer[1024];
+    printf("Inserire username e password\n");
     scanf("%s", buffer);
     sendMsg(sd, buffer);
     scanf("%s", buffer);
     sendMsg(sd, buffer);
 }
 
-void in() {
-    int sd = creaSocket();
+void in(srvPort) {
+    commandHandshake(sd, 2);
     char buffer[1024];
-
+    printf("Inserire username e password\n");
     scanf("%s", buffer);
     sendMsg(sd, buffer);
     scanf("%s", buffer);
@@ -59,7 +73,9 @@ void in() {
 int main(int argc, char* argv[]) {
     int ret, sd, len;
     len = 20;
+    char srvPort = argv[1];
     char command[20];
+    printf("porta usata %s", argc[1]);
     while (1) {
         printf("Choose operation:\n"
             "- signup [username] [password]\n"
@@ -68,20 +84,18 @@ int main(int argc, char* argv[]) {
 
         scanf("%s", command);
         if (!strcmp(command, "signup")) {
-            signup();
-            break;
+            signup(srvPort);
+            continue;
         }
 
         if (!strcmp(command, "in")) {
-            printf("ok\n");
-            in();
-            break;
+            in(srvPort);
+            continue;
         }
         // default
         printf("! Invalid operation\n");
     }
 
-    len = MESSAGE_LEN;
 
     close(sd);
 }
