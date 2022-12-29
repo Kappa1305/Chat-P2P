@@ -13,69 +13,121 @@
 
 #define MESSAGE_LEN 20 // Lunghezza del messaggio dal client
 
-int creaSocket(srvPort) {
-    int ret, sd, len;
+struct dev {
+    int port;
+    char* username;
+};
+
+struct serverStruct {
+    int sd;
+    int port;
+};
+
+struct dev thisDev;
+
+struct serverStruct server;
+
+int creaSocket() {
+    int sd;
     struct sockaddr_in srv_addr;
 
 
     /* Creazione socket */
     sd = socket(AF_INET, SOCK_STREAM, 0);
-    setsockopt(sd, SOL_SOCKET, SO_REUSEADDR, &(int){1}, sizeof(int));
+    if (sd == -1) {
+        perror("Something went wrong during socket()\n");
+        exit(-1);
+    }
+    if (setsockopt(sd, SOL_SOCKET, SO_REUSEADDR, &(int){1}, sizeof(int)) < 0) {
+        perror("Something went wrong during setsocket()\n");
+        // errore non grave, posso far andare avanti
+    }
     /* Creazione indirizzo del server */
     memset(&srv_addr, 0, sizeof(srv_addr)); // Pulizia 
     srv_addr.sin_family = AF_INET;
-    srv_addr.sin_port = htons(srvPort);
+    srv_addr.sin_port = htons(server.port);
     inet_pton(AF_INET, "127.0.0.1", &srv_addr.sin_addr);
 
-    ret = connect(sd, (struct sockaddr*)&srv_addr, sizeof(srv_addr));
-
-    if (ret < 0) {
-        perror("Errore in fase di connessione: \n");
+    if (connect(sd, (struct sockaddr*)&srv_addr, sizeof(srv_addr)) < 0) {
+        perror("Something went wrong during connect: \n");
         exit(-1);
     }
     return sd;
 }
 
-int commandHandshake(int sd, int command) {
-    int num;
+void sendCommand(int sd, int command) {
     sendNum(sd, command);
-    if (!recvNum(sd)) {
-        printf("handshake andato a buon fine\n");
-        return 0;
-    }
-    else {
-        printf("handshake fallito\n");
-        return 1;
-    }
 }
 
-void signup(srvPort) {
-    int sd = creaSocket(srvPort);
-    commandHandshake(sd, 1);
-    char buffer[1024];
-    printf("Inserire username e password\n");
-    scanf("%s", buffer);
-    sendMsg(sd, buffer);
-    scanf("%s", buffer);
-    sendMsg(sd, buffer);
+void signup() {
+    char username[1024];
+    char password[1024];
+    int sd, ret;
+
+    printf("Insert [server port] [username] [password]\n");
+    
+    scanf("%d", &server.port);
+    scanf("%s", username);
+    scanf("%s", password);
+
+    sd = creaSocket(server.port);
+
+    sendCommand(sd, 1);
+
+    sendMsg(sd, username);
+    sendMsg(sd, password);
+
+    ret = recvNum(sd);
+    if (ret == 0) {
+        printf("registrazione effettuata con successo\n");
+    }
+    else
+        printf("registrazione fallita\n");
+
+    close(sd);
+
+
+    close(sd);
 }
 
-void in(srvPort) {
-    commandHandshake(sd, 2);
+void in() {
+    int ret;
+    int sd;
+    char username[1024];
+    char password[1024];
     char buffer[1024];
-    printf("Inserire username e password\n");
-    scanf("%s", buffer);
-    sendMsg(sd, buffer);
-    scanf("%s", buffer);
-    sendMsg(sd, buffer);
+    printf("Insert [server port] [username] [password]\n");
+    scanf("%d", &server.port);
+    scanf("%s", username);
+    scanf("%s", password);
+
+    sd = creaSocket();
+
+    sendCommand(sd, 2);
+    sendMsg(sd, username);
+    sendMsg(sd, password);
+
+    ret = recvNum(sd);
+    if (ret == 0) {
+        printf("login effettuato con successo\n");
+    }
+    else
+        printf("login fallito\n");
+
+    close(sd);
+
 }
+
 
 int main(int argc, char* argv[]) {
-    int ret, sd, len;
-    len = 20;
-    char srvPort = argv[1];
+    int ret, len;
     char command[20];
-    printf("porta usata %s", argc[1]);
+    if (argc != 2) {
+        printf("Syntax error!\nCorrect syntax is: ./dev [port]\n");
+        exit(-1);
+    }
+    len = 20;
+    thisDev.port = atoi(argv[1]);
     while (1) {
         printf("Choose operation:\n"
             "- signup [username] [password]\n"
@@ -83,19 +135,20 @@ int main(int argc, char* argv[]) {
             "> ");
 
         scanf("%s", command);
+  
+
+
+
         if (!strcmp(command, "signup")) {
-            signup(srvPort);
+            signup();
             continue;
         }
-
         if (!strcmp(command, "in")) {
-            in(srvPort);
+            in();
             continue;
         }
         // default
         printf("! Invalid operation\n");
     }
 
-
-    close(sd);
 }

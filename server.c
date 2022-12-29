@@ -13,8 +13,39 @@
 #define MESSAGE_LEN 20 // Lunghezza del messaggio dal client
 
 struct device {
+    char username[1024];
+    int port;
+    char timestampLogin[TIMER_SIZE]; 
+    char timestampLogout[TIMER_SIZE]; 
 
-};
+    int id;
+}devices[MAX_DEVICES];
+
+int nDev;
+
+int thisPort;
+
+int deviceSetUp(username){
+    
+    if(nDev >= MAX_DEVICES)
+        return ERROR_CODE;               
+    nDev++;
+
+    struct device* d = &devices[nDev];
+
+    d->id = nDev;
+    d->username = malloc(sizeof(username)+1);
+    strcpy(d->username, username);
+    strcpy(d->timestampLogin, "00:00:00");            //default value: case of signup and not login
+    strcpy(d->timestampLogout, "00:00:00");
+
+
+    printf("[server] add_dev: added new device!\n"
+                    "\t dev_id: %d\n"
+                    "\t username: %s\n",
+                    d->id, d->username
+    );
+}
 
 void signupInsert(char username[1024], char password[1024]) {
     FILE* fptr;
@@ -72,46 +103,49 @@ int loginCheck(char username[1024], char password[1024]) {
     return 1;
 }
 
-void login(sd) {
+int login(sd) {
+    int ret;
     char username[1024];
     char password[1024];
     recvMsg(sd, username);
     recvMsg(sd, password);
-    loginCheck(username, password);
+    ret = loginCheck(username, password);
+    sendNum(sd, ret);    
 }
 
-void signup(sd) {
+int signup(sd) {
     char username[1024];
     char password[1024];
     recvMsg(sd, username);
     recvMsg(sd, password);
     if (signupControl(username)) {
         printf("username presente\n");
-        return;
+        return 1;
     }
+    deviceSetup(username);
     signupInsert(username, password);
+
+    return 0;
 }
 
-int recvCommand(int sd) {
+void recvCommand(int sd) {
     int command;
+    int ret;
     command = recvNum(sd);
     switch (command) {
     case 1:
         printf("comando ricevuto: signup\n");
-        sendNum(sd, 0);
-        signup(sd);
+        ret = signup(sd);
         break;
     case 2:
         printf("comando ricevuto: in\n");
-        sendNum(sd, 0);
-        login(sd);
+        ret = login(sd);
         break;
     default:
         printf("unknown command\n");
-        sendNum(sd, 1);
-        return -1;
+        ret = 1;
     }
-    return 0;
+    sendNum(sd, ret);
 }
 
 int creaSocket() {
@@ -124,20 +158,30 @@ int creaSocket() {
     /* Creazione indirizzo di bind */
     memset(&my_addr, 0, sizeof(my_addr)); // Pulizia 
     my_addr.sin_family = AF_INET;
-    my_addr.sin_port = htons(4242);
+    my_addr.sin_port = htons(thisPort);
     my_addr.sin_addr.s_addr = INADDR_ANY;
 
     ret = bind(sd, (struct sockaddr*)&my_addr, sizeof(my_addr));
     return sd;
 }
 
-int main() {
+int main(int argc, char* argv[]) {
     struct sockaddr_in cl_addr;
     int ret, sd, new_sd, len;
+    switch (argc) {
+    case 1:
+        thisPort = 4242;
+        break;
+    case 2:
+        thisPort = atoi(argv[1]);
+    default:
+        printf("Syntax error\n");
+        exit(-1);
+    }
     sd = creaSocket();
     ret = listen(sd, 10);
     if (ret < 0) {
-        perror("Errore in fase di bind: \n");
+        perror("Something went wrong during bind: \n");
         exit(-1);
     }
     while (1) {
@@ -163,8 +207,6 @@ int main() {
         // Invio risposta
         //ret = send(new_sd, (void*)buffer, len, 0);
 
-        if (ret < 0) {
-            perror("Errore in fase di invio: \n");
-        }
+        
     }
 }

@@ -10,7 +10,8 @@
 #include <unistd.h>
 
 #define ERROR_CODE 0
-
+#define TIMER_SIZE 8
+#define MAX_DEVICES 10
 
 void sendNum(int sd, int num) {
     uint16_t netNum = htons(num); // network number
