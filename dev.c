@@ -1,4 +1,5 @@
 
+
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/types.h>
@@ -16,6 +17,8 @@
 struct dev {
     int port;
     char* username;
+    bool online;
+    int id;
 };
 
 struct serverStruct {
@@ -59,13 +62,50 @@ void sendCommand(int sd, int command) {
     sendNum(sd, command);
 }
 
-void signup() {
+/*--------------------------------------*\
+|        ***     COMANDI     ***         |
+\*--------------------------------------*/
+
+void commandIn() {
+    int ret;
+    int sd;
+    char username[1024];
+    char password[1024];
+    char buffer[1024];
+    printf("Insert [server port] [username] [password]\n");
+    scanf("%d", &server.port);
+    scanf("%s", username);
+    scanf("%s", password);
+
+    sd = creaSocket();
+
+    sendCommand(sd, 2);
+
+    sendMsg(sd, username);
+    sendMsg(sd, password);
+    sendNum(sd, thisDev.port);
+    ret = recvNum(sd);
+    printf("%d\n", ret);
+    if (ret == ERROR_CODE) {
+        printf("login fallito\n");
+    }
+    else {
+        printf("login effettuato con successo\n");
+        printf("********************* DEVICE %d ONLINE ********************\n", ret);
+        thisDev.id = ret;
+        thisDev.online = true;
+    }
+    close(sd);
+
+}
+
+void commandSignup() {
     char username[1024];
     char password[1024];
     int sd, ret;
 
     printf("Insert [server port] [username] [password]\n");
-    
+
     scanf("%d", &server.port);
     scanf("%s", username);
     scanf("%s", password);
@@ -85,39 +125,40 @@ void signup() {
         printf("registrazione fallita\n");
 
     close(sd);
-
-
-    close(sd);
 }
 
-void in() {
-    int ret;
-    int sd;
+void commandChat() {
     char username[1024];
-    char password[1024];
-    char buffer[1024];
-    printf("Insert [server port] [username] [password]\n");
-    scanf("%d", &server.port);
-    scanf("%s", username);
-    scanf("%s", password);
+    int sd;
+    printf("Insert [username]\n");
 
     sd = creaSocket();
 
-    sendCommand(sd, 2);
+    sendCommand(sd, 5);
+
+    scanf("%s", username);
     sendMsg(sd, username);
-    sendMsg(sd, password);
-
-    ret = recvNum(sd);
-    if (ret == 0) {
-        printf("login effettuato con successo\n");
-    }
-    else
-        printf("login fallito\n");
-
-    close(sd);
-
 }
 
+void commandOut() {
+    char username[1024];
+    char password[1024];
+    int sd, ret;
+
+    sd = creaSocket(server.port);
+
+    sendCommand(sd, 7);
+    sendNum(sd, thisDev.id);
+    thisDev.online = false;
+    printf("********************* DEVICE %d OFFLINE ********************\n", thisDev.id);
+
+    close(sd);
+}
+
+
+/*--------------------------------------*\
+|         ***      MAIN      ***         |
+\*--------------------------------------*/
 
 int main(int argc, char* argv[]) {
     int ret, len;
@@ -128,27 +169,47 @@ int main(int argc, char* argv[]) {
     }
     len = 20;
     thisDev.port = atoi(argv[1]);
+    thisDev.online = false;
     while (1) {
-        printf("Choose operation:\n"
-            "- signup [username] [password]\n"
-            "- in [server port] [username] [password]\n"
-            "> ");
+        if (!thisDev.online) {
+            printf("Choose operation:\n"
+                "- signup [server port] [username] [password]\n"
+                "- in [server port] [username] [password]\n"
+                "> ");
 
-        scanf("%s", command);
-  
-
-
-
-        if (!strcmp(command, "signup")) {
-            signup();
-            continue;
+            scanf("%s", command);
+            if (!strcmp(command, "signup")) {
+                commandSignup();
+                continue;
+            }
+            if (!strcmp(command, "in")) {
+                commandIn();
+                continue;
+            }
+            // default
+            printf("! Invalid operation\n");
         }
-        if (!strcmp(command, "in")) {
-            in();
-            continue;
+        else {
+            printf("Choose operation:\n"
+                "- hanging\n"
+                "- show [username]\n"
+                "- chat [username]\n"
+                "- share [file_name]\n"
+                "- out\n"
+
+                "> ");
+
+            scanf("%s", command);
+            if (!strcmp(command, "chat")) {
+                commandChat();
+                continue;
+            }
+            if (!strcmp(command, "out")) {
+                commandOut();
+                continue;
+            }
+            // default
+            printf("! Invalid operation\n");
         }
-        // default
-        printf("! Invalid operation\n");
     }
-
 }
