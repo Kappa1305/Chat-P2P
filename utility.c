@@ -8,8 +8,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <time.h>
+#include <stdbool.h>
 
-#define ERROR_CODE 0
+#define ERROR_CODE 65535
 #define TIMER_SIZE 8
 #define MAX_DEVICES 10
 
