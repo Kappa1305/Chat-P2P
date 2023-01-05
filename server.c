@@ -138,7 +138,6 @@ int loginCheck(char username[1024], char password[1024]) {
 int creaSocket() {
     int ret, sd;
     struct sockaddr_in my_addr;
-    char buffer[1024];
     /* Creazione socket */
     sd = socket(AF_INET, SOCK_STREAM, 0);
     setsockopt(sd, SOL_SOCKET, SO_REUSEADDR, &(int){1}, sizeof(int));
@@ -149,6 +148,10 @@ int creaSocket() {
     my_addr.sin_addr.s_addr = INADDR_ANY;
 
     ret = bind(sd, (struct sockaddr*)&my_addr, sizeof(my_addr));
+    if (ret == -1) {
+        perror("Something went wrong during bind()\n");
+        exit(-1);
+    }
     return sd;
 }
 
@@ -172,7 +175,6 @@ void commandList() {
 |                     ***     COMANDI CLIENT     ***                     |
 \*----------------------------------------------------------------------*/
 void login(sd) {
-    int ret;
     char username[1024];
     char password[1024];
     int id, port;
@@ -220,8 +222,9 @@ void chat(sd) {
         sendNum(sd, ERROR_CODE);
     }
     dev = &devices[rId];
+    sendNum(sd, rId);
     sendNum(sd, dev->port);
-    printf("l'id di %s e' %d\n", username, dev->port);
+    printf("la porta di %s e' %d\n", username, dev->port);
 }
 
 void out(sd) {
@@ -234,7 +237,6 @@ void out(sd) {
 
 void recvCommand(int sd) {
     int command;
-    int ret;
     command = recvNum(sd);
     switch (command) {
     case 1:

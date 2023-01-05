@@ -11,9 +11,20 @@
 #include <time.h>
 #include <stdbool.h>
 
-#define ERROR_CODE 65535
 #define TIMER_SIZE 8
 #define MAX_DEVICES 10
+
+
+#define ERROR_CODE            65535
+#define OK_CODE             65534
+#define QUIT_CODE           65533
+#define USER_CODE           65532
+#define ADD_CODE            65531
+#define SHARE_CODE          65530
+#define HELP_CODE           65529
+#define CLEAR_CODE          65528
+#define BUSY_CODE           65527
+
 
 void sendNum(int sd, int num) {
     uint16_t netNum = htons(num); // network number
