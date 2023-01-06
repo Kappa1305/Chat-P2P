@@ -167,9 +167,15 @@ void commandList() {
     for (i = 0; i < nDev; i++) {
         dev = &devices[i];
         if (dev->timestampLogin > dev->timestampLogout) {
-            printf("%s\t%u\t%d\n", dev->username, dev->timestampLogin, dev->port);
+            printf("%s\t%u\t%d\n", dev->username, dev->port, dev->timestampLogin );
         }
     }
+}
+
+void commandHelp(){
+    printf("Choose operation:\n"
+            "- list -> print a list of the users online\n"
+            "- esc -> turn off the server\n");
 }
 /*----------------------------------------------------------------------*\
 |                     ***     COMANDI CLIENT     ***                     |
@@ -205,10 +211,12 @@ void signup(sd) {
     recvMsg(sd, password);
     if (signupControl(username)) {
         printf("username presente\n");
+        sendNum(sd, 1);
     }
-    else
+    else {
         signupInsert(username, password);
-
+        sendNum(sd, 0);
+    }
 }
 
 void chat(sd) {
@@ -234,6 +242,19 @@ void out(sd) {
     printf("Dispositivo %d disconnesso\n", id);
 }
 
+void usernameOnline(sd) {
+    int i;
+    struct device* dev;
+    char emptyLine[] = "\n";
+    printf("sono qua");
+    for (i = 0; i < nDev; i++) {
+        dev = &devices[i];
+        if (dev->timestampLogin > dev->timestampLogout) {
+            sendMsg(sd, dev->username);
+        }
+    }
+    sendMsg(sd, emptyLine);
+}
 
 void recvCommand(int sd) {
     int command;
@@ -255,6 +276,10 @@ void recvCommand(int sd) {
         printf("command received : out\n");
         out(sd);
         break;
+    case 8:
+        printf("command received : username\n");
+        usernameOnline(sd);
+        break;
     default:
         printf("unknown command\n");
     }
@@ -267,6 +292,9 @@ void readCommand() {
     scanf("%s", command);
     if (!strcmp(command, "list")) {
         commandList();
+    }
+    if (!strcmp(command, "help")) {
+        commandHelp();
     }
     else
         printf("! Invalid operation\n");
@@ -301,7 +329,7 @@ int main(int argc, char* argv[]) {
         perror("Something went wrong during bind: \n");
         exit(-1);
     }
-    
+
     fdtInit();
     FD_SET(sd, &master);
     fdmax = sd;

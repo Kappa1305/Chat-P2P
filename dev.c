@@ -1,4 +1,4 @@
-// AGGIUSTARE LA IN RIGUARDO LA PORTA NON RICHIESTA
+// AGGIUSTARE LA IN e la SIGNUP RIGUARDO LA PORTA NON RICHIESTA
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -163,9 +163,15 @@ void chatCommandHelp() {
         "\\s [file] : share [file] to users in chat\n"
         "\\q : quit chat\n");
 }
-
-void chatCommandQuit(sd) {
-    FD_CLR(sd, &master);
+void chatCommandQuit() {
+    int i;
+    for (i = 0; i < MAX_DEVICES; i++) {
+        if (devices[i].sd != -1) {
+            sendNum(devices[i].sd, thisDev.id);
+            FD_CLR(devices[i].sd, &master);
+        }
+    }
+    nDevChat = 0;
     return;
 }
 
@@ -183,13 +189,30 @@ void chatCommandAdd(sd) {
     sendNum(devices[rId].sd, thisDev.id);
     FD_SET(devices[rId].sd, &master);
     if (devices[rId].sd > fdmax) { fdmax = devices[rId].sd; }
+    nDevChat++;
     return;
+}
+
+void chatCommandUsername() {
+    char username[1024];
+    int serverSD = createSocket(-1);
+    sendCommand(serverSD, 8);
+    printf("Lista degli utenti online:\n");
+    while (1) {
+        recvMsg(serverSD, username);
+        if (username[0] == '\n')
+            break;
+
+        printf("%s\n", username);
+
+    }
 }
 
 void handleChat() {
     char msg[1024];
-    int i, code, id, rId, rPort;
-    fgets(msg, 1024, stdin); // necessaria in quanto altrimenti invia
+    int i, code, id, rId, rPort, j;
+    nDevChat = 1;
+    //fgets(msg, 1024, stdin); // necessaria in quanto altrimenti invia
     // una stringa vuota come primo messaggio, non si nota durante l'utilizzo
     for (i = 0; i < MAX_DEVICES; i++) {
         if (devices[i].sd != -1) {
@@ -197,7 +220,6 @@ void handleChat() {
             break;
         }
     }
-    printf("e da qua\n");
     FD_SET(devices[i].sd, &master);
     if (devices[i].sd > fdmax) { fdmax = devices[i].sd; }
     printf("inserisci il messaggio da inviare\n");
@@ -209,8 +231,11 @@ void handleChat() {
         }
         for (i = 0; i <= fdmax; i++) {
             if (FD_ISSET(i, &read_fds)) {
+                // sto mandando un messaggio da tastiera
                 if (!i) {
-                    fgets(msg, 1024, stdin);
+                    do {
+                        fgets(msg, 1024, stdin);
+                    } while (msg[0] == '\n');
                     code = checkChatCommand(msg);
                     for (i = 0; i < MAX_DEVICES; i++) {
                         if (devices[i].sd != -1) {
@@ -221,19 +246,17 @@ void handleChat() {
                     case OK_CODE:
                         break;
                     case QUIT_CODE:
-                        for (i = 0; i < MAX_DEVICES; i++) {
-                            if (devices[i].sd != -1) {
-                                printf("invio un messaggio su %d\n", devices[i].sd);
-                                chatCommandQuit(devices[i].sd); // qui non dovrebbe servire sd
-                            }
-                        }
-
+                        chatCommandQuit();
                         return;
                     case HELP_CODE:
                         chatCommandHelp();
                         break;
                     case ADD_CODE:
                         chatCommandAdd();
+                        break;
+                    case USER_CODE:
+                        chatCommandUsername();
+                        printf("Inserisci il messaggio da inviare\n");
                         break;
                         /*if (!strncmp(msg, "\\u", 2)) {
                             chatCommandUsername();
@@ -247,9 +270,13 @@ void handleChat() {
                         }*/
                     }
                 }
+                // qualcuno vuole aggiungersi alla chat
                 else if (i == listeningChatSocket) {
+                    // online ?? 
+                    nDevChat++;
                     handleRequest2();
                 }
+                // ricevuto un messaggio da qualcun'altro
                 else if (i != listeningChatSocket) {
                     recvMsg(i, msg);
                     code = checkChatCommand(msg);
@@ -258,8 +285,16 @@ void handleChat() {
                         printf("%s", msg);
                         break;
                     case QUIT_CODE:
+                        // mi faccio inviare da chi esce il suo id per poter cancellare il suo sd
+                        rId = recvNum(i);
+                        nDevChat--;
+                        devices[rId].sd = -1;
                         FD_CLR(i, &master);
-                        return;
+                        if (nDevChat == 0) {
+                            printf("non c'e' piu' nessuno in chat, chiudo\n");
+                            return;
+                        }
+                        break;
                     case HELP_CODE:
                         chatCommandHelp();
                         break;
@@ -269,13 +304,12 @@ void handleChat() {
                         devices[rId].sd = createSocket(rPort);
                         FD_SET(devices[rId].sd, &master);
                         if (devices[rId].sd > fdmax) { fdmax = devices[rId].sd; }
-
                         sendNum(devices[rId].sd, thisDev.id);
+                        nDevChat++;
                         break;
-                        /*if (!strncmp(msg, "\\u", 2)) {
-                            chatCommandUsername();
-                        }
-                        if (!strncmp(msg, "\\a", 2)) {
+                    case USER_CODE:
+                        break;
+                        /*if (!strncmp(msg, "\\a", 2)) {
                             chatCommandAdd();
                         }
                         if (!strncmp(msg, "\\s", 2)) {
@@ -351,18 +385,18 @@ void commandSignup() {
 
     printf("Insert [server port] [username] [password]\n");
 
-    scanf("%d", &server.port);
+    //scanf("%d", &server.port);
     scanf("%s", username);
     scanf("%s", password);
-
+    server.port = 4242;
     serverSD = createSocket(server.port);
 
     sendCommand(serverSD, 1);
 
     sendMsg(serverSD, username);
     sendMsg(serverSD, password);
-
     ret = recvNum(serverSD);
+
     if (ret == 0) {
         printf("registrazione effettuata con successo\n");
     }
@@ -464,7 +498,6 @@ int main(int argc, char* argv[]) {
     fdmax = listeningChatSocket;
 
     while (1) {
-
         if (!thisDev.online)
             printf("Choose operation:\n"
                 "- signup [server port] [username] [password]\n"
