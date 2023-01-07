@@ -1,5 +1,7 @@
 // AGGIUSTARE LA IN e la SIGNUP RIGUARDO LA PORTA NON RICHIESTA
-
+aggiustare la \u in chat, probabilmente bisogna modificare le chiamate
+di funzione commandfinddev modificata per prendere gli utenti online
+in chat
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/types.h>
@@ -176,8 +178,9 @@ void chatCommandQuit() {
 }
 
 void chatCommandAdd(sd) {
-    int rId, rPort, i;
-    requestDeviceData(&rId, &rPort);
+    int rId, rPort, i, serverSD;
+    serverSD = createSocket(-1);
+    requestDeviceData(serverSD, &rId, &rPort);
 
     for (i = 0; i < MAX_DEVICES; i++) {
         if (devices[i].sd != -1) {
@@ -196,7 +199,7 @@ void chatCommandAdd(sd) {
 void chatCommandUsername() {
     char username[1024];
     int serverSD = createSocket(-1);
-    sendCommand(serverSD, 8);
+    sendCommand(serverSD, COMMAND_DEVICE_DATA);
     printf("Lista degli utenti online:\n");
     while (1) {
         recvMsg(serverSD, username);
@@ -220,6 +223,7 @@ void handleChat() {
             break;
         }
     }
+    system("clear");
     FD_SET(devices[i].sd, &master);
     if (devices[i].sd > fdmax) { fdmax = devices[i].sd; }
     printf("inserisci il messaggio da inviare\n");
@@ -323,14 +327,44 @@ void handleChat() {
     }
 }
 
+void handleChatServer(int serverSD) {
+    char msg[1024], buffer[1024], * csId;
+    int code, i;
+    system("clear");
+    printf("inserisci il messaggio da inviare\n");
+    sendNum(serverSD, thisDev.id);
+    while (1) {
+        do {
+            fgets(msg, 1024, stdin);
+        } while (msg[0] == '\n');
+        code = checkChatCommand(msg);
+
+        if (code == OK_CODE || code == QUIT_CODE) {
+            sendMsg(serverSD, msg);
+        }
+        switch (code) {
+        case OK_CODE:
+            break;
+        case QUIT_CODE:
+            close(serverSD);
+            return;
+        default:
+            printf("Invalid command in chat with offline user");
+        }
+    }
+}
+
 void handleRequest() {
-    int chatSD, sId; // sender id
+    int chatSD, sId, serverSD; // sender id
     struct sockaddr_in s_addr;
     socklen_t addrlen = sizeof(s_addr);
     chatSD = accept(listeningChatSocket, (struct sockaddr*)&s_addr, &addrlen);
     sId = recvNum(chatSD);
     devices[sId].sd = chatSD;
     handleChat();
+    serverSD = createSocket(-1);
+    sendCommand(serverSD, COMMAND_NO_LONGER_BUSY);
+    close(serverSD);
     close(devices[sId].sd);
 }
 
@@ -355,7 +389,7 @@ void commandIn() {
 
     serverSD = createSocket(-1);
 
-    sendCommand(serverSD, 2);
+    sendCommand(serverSD, COMMAND_IN);
     sendMsg(serverSD, username);
     sendMsg(serverSD, password);
     sendNum(serverSD, thisDev.port);
@@ -369,7 +403,6 @@ void commandIn() {
         printf("********************* DEVICE %d ONLINE ********************\n", ret);
         createListeningSocket();
         thisDev.id = ret;
-        printf("il mio id e %d\n", ret);
         thisDev.online = true;
     }
     close(serverSD);
@@ -391,7 +424,7 @@ void commandSignup() {
     server.port = 4242;
     serverSD = createSocket(server.port);
 
-    sendCommand(serverSD, 1);
+    sendCommand(serverSD, COMMAND_SIGNUP);
 
     sendMsg(serverSD, username);
     sendMsg(serverSD, password);
@@ -408,25 +441,42 @@ void commandSignup() {
 
 // CHAT
 
-int requestDeviceData(int* id, int* port) {
+int requestDeviceData(int serverSD, int* id, int* port) {
     char username[1024];
-    int serverSD, Port;
     printf("Insert [username]\n");
-    serverSD = createSocket(-1);
-    sendCommand(serverSD, 5);
+    sendCommand(serverSD, COMMAND_DEVICE_DATA);
     scanf("%s", username);
     sendMsg(serverSD, username);
     *id = recvNum(serverSD);
     *port = recvNum(serverSD);
-
 }
 
 void commandChat() {
     int rPort, rId;
-    requestDeviceData(&rId, &rPort);
+    int serverSD = createSocket(-1);
+
+    requestDeviceData(serverSD, &rId, &rPort);
+    if (rId == USER_NOT_FOUND) {
+        printf("Username not found\n");
+        return;
+    }
+    if (rPort == USER_OFFLINE) {
+        printf("User is offline\n");
+        handleChatServer(serverSD);
+        return;
+    }
+    if (rPort == USER_BUSY) {
+        printf("User is busy\n");
+        handleChatServer(serverSD);
+        return;
+    }
+    close(serverSD);
     devices[rId].sd = createSocket(rPort);
     sendNum(devices[rId].sd, thisDev.id);
     handleChat();
+    serverSD = createSocket(-1);
+    sendCommand(serverSD, COMMAND_NO_LONGER_BUSY);
+    close(serverSD);
 }
 // OUT
 
@@ -435,7 +485,7 @@ void commandOut() {
 
     serverSD = createSocket(server.port);
 
-    sendCommand(serverSD, 7);
+    sendCommand(serverSD, COMMAND_OUT);
     sendNum(serverSD, thisDev.id);
     thisDev.online = false;
     printf("********************* DEVICE %d OFFLINE ********************\n", thisDev.id);
@@ -488,6 +538,7 @@ int main(int argc, char* argv[]) {
         printf("Syntax error!\nCorrect syntax is: ./dev [port]\n");
         exit(-1);
     }
+    system("clear");
     thisDev.port = atoi(argv[1]);
     thisDev.online = false;
     for (i = 0; i < MAX_DEVICES; i++) {

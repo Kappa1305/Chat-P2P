@@ -22,9 +22,9 @@ struct device {
     int port;
     unsigned timestampLogin;
     unsigned timestampLogout;
-    bool online;
-
+    bool busy;
     int id;
+    int chatSD;
 }devices[MAX_DEVICES];
 
 int nDev;
@@ -51,7 +51,7 @@ int deviceSetup(char* username) {
     strcpy(dev->username, username);
     dev->timestampLogin = 0;            //default value: case of signup and not login
     dev->timestampLogout = 0;
-
+    dev->busy = 0;
     printf("[server] add_dev: added new device!\n"
         "\t dev_id: %d\n"
         "\t username: %s\n",
@@ -167,15 +167,15 @@ void commandList() {
     for (i = 0; i < nDev; i++) {
         dev = &devices[i];
         if (dev->timestampLogin > dev->timestampLogout) {
-            printf("%s\t%u\t%d\n", dev->username, dev->port, dev->timestampLogin );
+            printf("%s\t\t%u\t%d\n", dev->username, dev->port, dev->timestampLogin);
         }
     }
 }
 
-void commandHelp(){
+void commandHelp() {
     printf("Choose operation:\n"
-            "- list -> print a list of the users online\n"
-            "- esc -> turn off the server\n");
+        "- list -> print a list of the users online\n"
+        "- esc -> turn off the server\n");
 }
 /*----------------------------------------------------------------------*\
 |                     ***     COMANDI CLIENT     ***                     |
@@ -219,20 +219,43 @@ void signup(sd) {
     }
 }
 
-void chat(sd) {
+int commandFindDev(sd) {
     char username[1024];
-    int rId;
+    int rId, sId;
     struct device* dev;
     recvMsg(sd, username);
     rId = findDevice(username);
     if (rId == -1) {
         printf("Nessun utente registrato con username %s\n", username);
-        sendNum(sd, ERROR_CODE);
+        sendNum(sd, USER_NOT_FOUND);
+        sendNum(sd, USER_NOT_FOUND);
+        return USER_NOT_FOUND;
     }
     dev = &devices[rId];
     sendNum(sd, rId);
+    if (dev->timestampLogin <= dev->timestampLogout) {
+        sendNum(sd, USER_OFFLINE);
+        printf("%s is offline\n", username);
+        FD_SET(sd, &master);
+        if (sd > fdmax) { fdmax = sd; }
+        sId = recvNum(sd);
+        devices[sId].chatSD = sd;
+        devices[sId].busy = 1;
+        return USER_OFFLINE;
+    }
+    if (dev->busy) {
+        sendNum(sd, USER_BUSY);
+        printf("%s is busy", username);
+        FD_SET(sd, &master);
+        if (sd > fdmax) { fdmax = sd; }
+        sId = recvNum(sd);
+        devices[sId].chatSD = sd;
+        devices[sId].busy = 1;
+        return USER_BUSY;
+    }
     sendNum(sd, dev->port);
-    printf("la porta di %s e' %d\n", username, dev->port);
+    printf(" %s's port is %d\n", username, dev->port);
+    return 0;
 }
 
 void out(sd) {
@@ -260,30 +283,29 @@ void recvCommand(int sd) {
     int command;
     command = recvNum(sd);
     switch (command) {
-    case 1:
+    case COMMAND_SIGNUP:
         printf("command received : signup\n");
         signup(sd);
         break;
-    case 2:
+    case COMMAND_IN:
         printf("command received : in\n");
         login(sd);
         break;
-    case 5:
+    case COMMAND_CHAT:
         printf("command received : chat\n");
-        chat(sd);
         break;
-    case 7:
+    case COMMAND_OUT:
         printf("command received : out\n");
         out(sd);
         break;
-    case 8:
-        printf("command received : username\n");
-        usernameOnline(sd);
+    case COMMAND_DEVICE_DATA: // USERNAME
+        printf("command received : device_data\n");
+        commandFindDev(sd);
         break;
+    case COMMAND_NO_LONGER_BUSY:
     default:
         printf("unknown command\n");
     }
-    // sendNum(sd, ret);
 }
 
 void readCommand() {
@@ -292,12 +314,34 @@ void readCommand() {
     scanf("%s", command);
     if (!strcmp(command, "list")) {
         commandList();
+        return;
     }
     if (!strcmp(command, "help")) {
         commandHelp();
+        return;
     }
-    else
-        printf("! Invalid operation\n");
+    printf("! Invalid operation\n");
+}
+
+void handleChat(int sd) {
+    char msg[1024];
+    int sId, i;
+    struct device* dev;
+    for (i = 0; i < nDev; i++) {
+        dev = &devices[i];
+        if (dev->chatSD == sd) {
+            sId = i;
+            break;
+        }
+    }
+    recvMsg(sd, msg);
+    if (!strncmp(msg, "\\q", 2)) {
+        FD_CLR(dev->chatSD, &master);
+        close(dev->chatSD);
+        devices[sId].busy = 0;
+        return;
+    }
+    printf("il device %d ha inviato %s", sId, msg);
 }
 
 /*----------------------------------------------------------------------*\
@@ -347,21 +391,27 @@ int main(int argc, char* argv[]) {
         }
         for (i = 0; i <= fdmax; i++) {
             if (FD_ISSET(i, &read_fds)) {
-                if (i == 0)                      //keyboard
+                if (i == 0) {                      //keyboard
                     readCommand();
-                if (i == sd)       //device request  
-                    len = sizeof(cl_addr);
-
-                // Accetto nuove connessioni
-                new_sd = accept(sd, (struct sockaddr*)&cl_addr, &len);
-
-                // Attendo risposta
-                len = MESSAGE_LEN;
-                recvCommand(new_sd);
-                if (ret < 0) {
-                    perror("Errore in fase di ricezione: \n");
                     continue;
                 }
+                if (i == sd) {       //device request  
+                    len = sizeof(cl_addr);
+
+                    // Accetto nuove connessioni
+                    new_sd = accept(sd, (struct sockaddr*)&cl_addr, &len);
+
+                    // Attendo risposta
+                    len = MESSAGE_LEN;
+                    recvCommand(new_sd);
+                    if (ret < 0) {
+                        perror("Errore in fase di ricezione: \n");
+                        continue;
+                    }
+                    continue;
+                }
+                // un utente sta mandando un messaggio a un dev offline
+                handleChat(i);
             }
         }
     }

@@ -15,7 +15,7 @@
 #define MAX_DEVICES 10
 
 
-#define ERROR_CODE            65535
+#define ERROR_CODE          65535
 #define OK_CODE             65534
 #define QUIT_CODE           65533
 #define USER_CODE           65532
@@ -23,7 +23,21 @@
 #define SHARE_CODE          65530
 #define HELP_CODE           65529
 #define CLEAR_CODE          65528
-#define BUSY_CODE           65527
+#define USER_BUSY           65527
+#define USER_OFFLINE        65526
+#define USER_NOT_FOUND      65525
+#define COMMAND_SIGNUP      1
+#define COMMAND_IN          2
+#define COMMAND_CHAT        3
+
+#define COMMAND_DEVICE_DATA 5
+#define COMMAND_OUT         7
+#define COMMAND_NO_LONGER_BUSY 10
+
+
+
+
+
 
 
 void sendNum(int sd, int num) {
