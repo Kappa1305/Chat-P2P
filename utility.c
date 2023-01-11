@@ -1,4 +1,3 @@
-
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/types.h>
@@ -13,6 +12,8 @@
 
 #define TIMER_SIZE 8
 #define MAX_DEVICES 10
+#define BUFFER_SIZE 1024
+#define WORD_SIZE 1024
 
 
 #define ERROR_CODE          65535
@@ -28,11 +29,13 @@
 #define USER_NOT_FOUND      65525
 #define COMMAND_SIGNUP      1
 #define COMMAND_IN          2
-#define COMMAND_CHAT        3
+#define COMMAND_HANGING     3
+#define COMMAND_CHAT        4
 
 #define COMMAND_DEVICE_DATA 5
 #define COMMAND_OUT         7
-#define COMMAND_NO_LONGER_BUSY 10
+#define COMMAND_BUSY        10
+#define COMMAND_NOT_BUSY    11
 
 
 
@@ -84,3 +87,51 @@ int recvMsg(int sd, char* msg) {
     msg = buffer;
     return 0;
 }
+/*
+void recv_file(int sd, char type[WORD_SIZE], bool show){
+    if(show)
+        printf("[recv_file] start\n");
+    FILE *fp;
+    int n;
+    char buffer[BUFFER_SIZE];
+
+    char namefile[WORD_SIZE];
+    sprintf(namefile, "recv.%s", type);
+    if(show)
+        printf("%s\n", namefile);
+
+    fp = fopen(namefile, "w");
+
+    while(true){
+        int code = recv_int(sd, false);
+        if(code == OK_CODE){
+            n = recv(sd, buffer, BUFFER_SIZE, 0);
+            fprintf(fp, "%s", buffer);
+            bzero(buffer, BUFFER_SIZE);
+        }
+        else{
+            if(show)
+                printf("[recv_file] end\n");
+            fclose(fp);
+            return;
+        }
+    }
+}
+
+void sendFile(FILE* fp, int sd) {
+    while (true) {
+        if (fgets(buff, BUFFER_SIZE, fp) != NULL) {
+            send_int(OK_CODE, sd);
+            if (send(sd, buff, sizeof(buff), 0) == -1) {
+                perror("[SHARE] Error!\n");
+                exit(1);
+            }
+            bzero(buff, BUFFER_SIZE);
+        }
+        else {
+            send_int(ERR_CODE, sd);
+            return;
+        }
+    }
+}
+*/

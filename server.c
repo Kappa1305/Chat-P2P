@@ -7,6 +7,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <sys/stat.h>
+
 
 #include "utility.c"
 
@@ -17,19 +19,33 @@ fd_set master;          //main set: managed with macro
 fd_set read_fds;        //read set: managed from select()
 int fdmax;
 
+
+struct stat st = { 0 };
+
 struct device {
     char* username;
+    char* password;
     int port;
-    unsigned timestampLogin;
-    unsigned timestampLogout;
+    time_t timestampLogin;
+    time_t timestampLogout;
     bool busy;
     int id;
-    int chatSD;
+    int chatSD; // utilizzato per le chat tra dev e dev offline
+    int rId; // id dell'utente a cui sta inviando messaggi offline
 }devices[MAX_DEVICES];
 
 int nDev;
 
-int thisPort;
+int thisPort; // porta del server
+
+struct pending {
+    int num;
+    time_t lastMsgTimestamp;
+}pend[MAX_DEVICES][MAX_DEVICES];
+
+/*----------------------------------------------------------------------*\
+|                  ***     FUNZIONI GENERALI     ***                     |
+\*----------------------------------------------------------------------*/
 
 void fdtInit() {
     FD_ZERO(&master);
@@ -37,29 +53,67 @@ void fdtInit() {
     FD_SET(0, &master);
 
     fdmax = 0;
-    printf("[server] fdt_init: set init done!\n");
+    printf("[FDT] fdt_init: set init done!\n");
 }
 
-int deviceSetup(char* username) {
-
-    if (nDev >= MAX_DEVICES)
-        return ERROR_CODE;
-    struct device* dev = &devices[nDev];
-
-    dev->id = nDev;
-    dev->username = malloc(sizeof(username) + 1);
-    strcpy(dev->username, username);
-    dev->timestampLogin = 0;            //default value: case of signup and not login
-    dev->timestampLogout = 0;
-    dev->busy = 0;
-    printf("[server] add_dev: added new device!\n"
-        "\t dev_id: %d\n"
-        "\t username: %s\n",
-        dev->id, dev->username
-    );
-    return nDev++;
+void timestampTranslate(time_t timestamp, char* buf) {
+    struct tm* ts;
+    ts = localtime(&timestamp);
+    strftime(buf, sizeof(buf), "%X", ts);
 }
 
+// avvio del server
+void restoreServer() {
+    int i;
+    char buff[1024];
+    FILE* restoreFile = fopen("restoreServer.txt", "r");
+
+    if (!restoreFile) {
+        nDev = 0;
+        printf("<RESTORE> First access, nothing to restore\n");
+        return;
+    }
+    // primo numero nel file rappresenta il numero di dispositivi registrati
+    fscanf(restoreFile, "%d\n", &nDev);
+    for (i = 0; i < nDev; i++) {
+        fgets(buff, sizeof(buff), restoreFile);
+        struct device* d = &devices[i];
+        //use strtok() to get buffer values 
+
+        char* b = strtok(buff, " ");
+        d->id = atoi(b);                        //id
+
+        b = strtok(NULL, " ");
+        d->username = malloc(sizeof(b));        //username
+        strcpy(d->username, b);
+
+
+        b = strtok(NULL, " ");
+        d->password = malloc(sizeof(b));        //password
+        strcpy(d->password, b);
+
+        b = strtok(buff, " ");
+        d->timestampLogin = atoi(b);
+        /*b = strtok(NULL, " ");
+        strcpy(d->time_login, b);               //time_login
+        b = strtok(NULL, " ");
+        d->port = atoi(b);                      //port
+        b = strtok(NULL, " ");
+        d->pend_dev_before_logout = atoi(b);    //pend_dev_before_logout
+        b = strtok(NULL, " ");
+        d->pend_dev = atoi(b);                  //pend_dev
+        */
+    }
+
+    fclose(restoreFile);
+}
+
+void handleDevCrash(int sd) {
+
+}
+
+// prende in ingresso l'username di un dispositivo e restituisce
+// il suo id
 int findDevice(char* username) {
     int i = 0;
     struct device* dev;
@@ -72,76 +126,77 @@ int findDevice(char* username) {
     return -1;
 }
 
-void updateDevice(int id, int port) {
+// chiamata al momento della registrazione per aggiungere un nuovo dispositivo
+void devAdd(char username[1024], char password[1024]) {
+    struct device* dev = &devices[nDev];
+    dev->id = nDev;
+    dev->busy = false;
+    dev->username = malloc(sizeof(username) + 1);
+    dev->password = malloc(sizeof(password) + 1);
+    strcpy(dev->username, username);
+    strcpy(dev->password, password);
+    dev->timestampLogout = 0;
+    dev->timestampLogin = 0;
+    nDev++;
+}
+
+
+// chiamata al momento del login per aggiornare la struttura dati del dev
+void devUpdate(int id, int port) {
     struct device* dev = &devices[id];
+    dev->busy = false;
     dev->port = port;
     dev->timestampLogin = time(NULL);
-    dev->timestampLogout = 0;
+    // dev->timestampLogout = 0;
 }
 
-void signupInsert(char username[1024], char password[1024]) {
-    FILE* fptr;
-    fptr = fopen("autenticazione.txt", "a");
-    fprintf(fptr, "%s ", username);
-    fprintf(fptr, "%s\n", password);
-    fclose(fptr);
-}
-
+// chiamata al momento della registrazione per controllare che l'username
+// non sia già in uso
 int signupControl(char username[1024]) {
-    FILE* fptr;
-    int c = 0;
-    char usernamePresente[1024];
-    fptr = fopen("autenticazione.txt", "r");
-    while (fscanf(fptr, "%s", usernamePresente) != EOF) {
-        if (c == 1) { // mi assicura di star controllando l'username e non la pswx
-            c = 0;
-            continue;
-        }
-        c = 1;
-        if (!strcmp(username, usernamePresente))
+    int i;
+    struct device* dev;
+    for (i = 0; i < nDev; i++) {
+        dev = &devices[i];
+        if (!strcmp(dev->username, username))
             return 1;
-
     }
-    fclose(fptr);
     return 0;
 }
 
+// controll che i dati inseriti in fase di login siano corretti
 int loginCheck(char username[1024], char password[1024]) {
-    FILE* fptr;
-    int c = 0;
-    char usernamePresente[1024];
-    char passwordPresente[1024];
-    fptr = fopen("autenticazione.txt", "r");
-    while (fscanf(fptr, "%s", usernamePresente) != EOF) {
-        if (c == 1) { // mi assicura di star controllando l'username e non la pswx
-            c = 0;
-            continue;
-        }
-        c = 1;
-        if (!strcmp(username, usernamePresente)) {
-            fscanf(fptr, "%s", passwordPresente);
-            if (!strcmp(password, passwordPresente)) {
-
-
-                return 0;
+    int i;
+    struct device* dev;
+    for (i = 0; i < nDev; i++) {
+        dev = &devices[i];
+        if (!strcmp(dev->username, username)) {
+            if (!strcmp(dev->password, password)) {
+                return i;
             }
             else {
-                return 1;
+                printf("<LOGIN> Wrong password\n");
+                return -1;
             }
         }
     }
-    fclose(fptr);
-    printf("username non presente\n");
-    return 1;
+    // se sono uscito dal for l'username non è stato trovato
+    printf("<LOGIN> Username not found\n");
+    return -1;
 }
 
 int creaSocket() {
     int ret, sd;
     struct sockaddr_in my_addr;
-    /* Creazione socket */
+    // Creazione socket 
     sd = socket(AF_INET, SOCK_STREAM, 0);
-    setsockopt(sd, SOL_SOCKET, SO_REUSEADDR, &(int){1}, sizeof(int));
-    /* Creazione indirizzo di bind */
+    if (sd == -1) {
+        perror("Something went wrong during bind()\n");
+        exit(-1);
+    }
+    if (setsockopt(sd, SOL_SOCKET, SO_REUSEADDR, &(int){1}, sizeof(int)) < 0) {
+        perror("Something went wrong during setsockopt(..,SO_REUSEADDR,..)\n");
+    }
+    // Creazione indirizzo di bind 
     memset(&my_addr, 0, sizeof(my_addr)); // Pulizia 
     my_addr.sin_family = AF_INET;
     my_addr.sin_port = htons(thisPort);
@@ -166,9 +221,9 @@ void commandList() {
     printf("username\tport\tlogin timestamp\n\n");
     for (i = 0; i < nDev; i++) {
         dev = &devices[i];
-        if (dev->timestampLogin > dev->timestampLogout) {
+        if (dev->timestampLogin > dev->timestampLogout)
+            // username     port    timestampLogin
             printf("%s\t\t%u\t%d\n", dev->username, dev->port, dev->timestampLogin);
-        }
     }
 }
 
@@ -177,6 +232,26 @@ void commandHelp() {
         "- list -> print a list of the users online\n"
         "- esc -> turn off the server\n");
 }
+
+void commandEsc() {
+    int i;
+    FILE* restoreFile = fopen("restoreServer.txt", "w");
+    struct device* dev;
+    fprintf(restoreFile, "%d\n", nDev);
+    for (i = 0; i < nDev; i++) {
+        dev = &devices[i];
+        //copy network status in a file
+        fprintf(restoreFile, "%d %s %s %d\n",
+            dev->id, dev->username,
+            dev->password, dev->timestampLogin
+            /* dev->time_login,
+             dev->port,
+            d->pend_dev_before_logout, d->pend_dev*/
+        );
+    }
+    fclose(restoreFile);
+    exit(0);
+}
 /*----------------------------------------------------------------------*\
 |                     ***     COMANDI CLIENT     ***                     |
 \*----------------------------------------------------------------------*/
@@ -184,132 +259,232 @@ void login(sd) {
     char username[1024];
     char password[1024];
     int id, port;
-    recvMsg(sd, username);
-    recvMsg(sd, password);
+    if (recvMsg(sd, username) == ERROR_CODE) {
+        printf("<ERROR> [IN] Something wrong happened...\n");
+        close(sd);
+        return;
+    }
+    if (recvMsg(sd, password) == ERROR_CODE) {
+        printf("<ERROR> [IN] Something wrong happened...\n");
+        close(sd);
+        return;
+    }
     port = recvNum(sd);
-    if (!loginCheck(username, password)) {
-        printf("login eseguito con successo\n");
-        id = findDevice(username);
-        if (id == -1) {
-            id = deviceSetup(username);
-        }
-        printf("%d\n", id);
-        updateDevice(id, port);
-        sendNum(sd, id);
+    if (port == ERROR_CODE) {
+        printf("<ERROR> [IN] Something wrong happened...\n");
+        close(sd);
+        return;
+    }
+    id = loginCheck(username, password);
+    if (id == -1) {
+        printf("[LOGIN] Fail\n");
+        sendNum(sd, ERROR_CODE);
     }
     else {
-        printf("login fallito\n"); // esiste un solo utente con tale username, 
-        //quindi se non è corretta questa password non controllo altri
-        sendNum(sd, ERROR_CODE);
+        printf("[LOGIN] Success\n");
+        id = findDevice(username);
+        /*if (id == -1) {
+            id = deviceSetup(username);
+        }*/
+        devUpdate(id, port);
+        sendNum(sd, id);
     }
 }
 
 void signup(sd) {
     char username[1024];
     char password[1024];
-    recvMsg(sd, username);
-    recvMsg(sd, password);
-    if (signupControl(username)) {
-        printf("username presente\n");
+
+    if (recvMsg(sd, username) == ERROR_CODE) {
+        printf("<ERROR> [SIGNUP] Something wrong happened...\n");
+        close(sd);
+        return;
+    }
+    if (recvMsg(sd, password) == ERROR_CODE) {
+        printf("<ERROR> [SIGNUP] Something wrong happened...\n");
+        close(sd);
+        return;
+    }
+    if (nDev >= MAX_DEVICES || signupControl(username)) {
         sendNum(sd, 1);
     }
     else {
-        signupInsert(username, password);
+        devAdd(username, password);
         sendNum(sd, 0);
     }
 }
 
-int commandFindDev(sd) {
+void hanging(int sd) {
+    struct tm ts;
+    char emptyLine[] = "\n";
+    int i, id = recvNum(sd);
+    if (id == ERROR_CODE) {
+        printf("<ERROR> Something went wrong happened\n");
+        close(sd);
+        //handleDevCrash(sd);
+        return;
+    }
+    struct device* dev = &devices[id];
+    char buf[80];
+    for (i = 0; i < MAX_DEVICES; i++) {
+        printf("%d\n", pend[i][id].num);
+        if (pend[i][id].num != 0) {
+            sendMsg(sd, devices[i].username);
+            sendNum(sd, pend[i][id].num);
+            ts = *localtime(&pend[i][id].lastMsgTimestamp);
+            strftime(buf, sizeof(buf), "%a %Y-%m-%d %H:%M:%S %Z", &ts);
+            sendMsg(sd, buf);
+        }
+    }
+    sendMsg(sd, emptyLine);
+    printf("<HANGING> All hanging devices sent\n");
+}
+void prepareChatOffline(int sd, int rId) {
+    int sId;
+    FD_SET(sd, &master);
+    if (sd > fdmax) { fdmax = sd; }
+    sId = recvNum(sd);
+    if (sId == ERROR_CODE) {
+        printf("<ERROR> Something wrong happened...\n");
+        close(sd);
+        //handleDevCrash(sd);
+        return;
+    }
+    devices[sId].chatSD = sd;
+    devices[sId].rId = rId;
+    devices[sId].busy = 1;
+}
+
+void handleChatRequest(sd) {
     char username[1024];
-    int rId, sId;
+    int rId;
     struct device* dev;
-    recvMsg(sd, username);
+    if (recvMsg(sd, username) == ERROR_CODE) {
+        printf("<ERROR> Something wrong happened\n");
+        close(sd);
+        //handleDevCrash(sd);
+        return;
+    }
     rId = findDevice(username);
     if (rId == -1) {
-        printf("Nessun utente registrato con username %s\n", username);
+        printf("[CHAT] User '%s' not found\n", username);
         sendNum(sd, USER_NOT_FOUND);
         sendNum(sd, USER_NOT_FOUND);
-        return USER_NOT_FOUND;
+        return;
     }
     dev = &devices[rId];
     sendNum(sd, rId);
+
     if (dev->timestampLogin <= dev->timestampLogout) {
         sendNum(sd, USER_OFFLINE);
-        printf("%s is offline\n", username);
-        FD_SET(sd, &master);
-        if (sd > fdmax) { fdmax = sd; }
-        sId = recvNum(sd);
-        devices[sId].chatSD = sd;
-        devices[sId].busy = 1;
-        return USER_OFFLINE;
+        printf("[CHAT] %s is offline, preparing for offline chat\n", username);
+        prepareChatOffline(sd, rId);
+        return;
     }
     if (dev->busy) {
         sendNum(sd, USER_BUSY);
-        printf("%s is busy", username);
-        FD_SET(sd, &master);
-        if (sd > fdmax) { fdmax = sd; }
-        sId = recvNum(sd);
-        devices[sId].chatSD = sd;
-        devices[sId].busy = 1;
-        return USER_BUSY;
+        printf("[CHAT] %s is busy, preparing for offline chat\n", username);
+        prepareChatOffline(sd, rId);
+        return;
     }
+    printf("[CHAT] %s is online, they'll handle chat themeself\n", username);
     sendNum(sd, dev->port);
-    printf(" %s's port is %d\n", username, dev->port);
-    return 0;
+    return;
 }
+
 
 void out(sd) {
     int id = recvNum(sd);
+    if (id == ERROR_CODE) {
+        printf("<ERROR> Something wrong happened\n");
+        close(sd);
+        //handleDevCrash(sd);
+        return;
+    }
     struct device* dev = &devices[id];
     dev->timestampLogout = time(NULL);
-    printf("Dispositivo %d disconnesso\n", id);
+    printf("[OUT] Dev %d is now offline\n", id);
 }
 
 void usernameOnline(sd) {
     int i;
     struct device* dev;
     char emptyLine[] = "\n";
-    printf("sono qua");
     for (i = 0; i < nDev; i++) {
         dev = &devices[i];
         if (dev->timestampLogin > dev->timestampLogout) {
             sendMsg(sd, dev->username);
         }
     }
+    // il dispotivo sa da protocollo che quando ottiene una riga vuota significa
+    // che non ci sono ulteriori dispositivi online oltre a quelli già inviati
     sendMsg(sd, emptyLine);
+    printf("[OUT] All online users were sent\n");
 }
 
 void recvCommand(int sd) {
     int command;
+    int id; // usato per la busy e not busy
     command = recvNum(sd);
+    if (command == ERROR_CODE) {
+        printf("<ERROR> Something wrong happened\n");
+        close(sd);
+        //handleDevCrash(sd);
+        return;
+    }
     switch (command) {
     case COMMAND_SIGNUP:
-        printf("command received : signup\n");
+        printf("Command received : signup\n");
         signup(sd);
         break;
     case COMMAND_IN:
-        printf("command received : in\n");
+        printf("Command received : in\n");
         login(sd);
         break;
+    case COMMAND_HANGING:
+        printf("Command received : hanging\n");
+        hanging(sd);
+        break;
     case COMMAND_CHAT:
-        printf("command received : chat\n");
+        printf("Command received : chat\n");
+        handleChatRequest(sd);
         break;
     case COMMAND_OUT:
-        printf("command received : out\n");
+        printf("Command received : out\n");
         out(sd);
         break;
     case COMMAND_DEVICE_DATA: // USERNAME
-        printf("command received : device_data\n");
-        commandFindDev(sd);
+        printf("Command received : device_data\n");
+        usernameOnline(sd);
         break;
-    case COMMAND_NO_LONGER_BUSY:
+    case COMMAND_BUSY:
+        id = recvNum(sd);
+        if (id == ERROR_CODE) {
+            printf("<ERROR> Something wrong happened\n");
+            close(sd);
+            //handleDevCrash(sd);
+            return;
+        }
+        devices[id].busy = true;
+        printf("Command received : %d is busy\n", id);
+        break;
+    case COMMAND_NOT_BUSY:
+        id = recvNum(sd);
+        if (id == ERROR_CODE) {
+            printf("<ERROR> Something wrong happened\n");
+            close(sd);
+            //handleDevCrash(sd);
+            return;
+        }
+        devices[id].busy = false;
+        printf("Command received : %d is no longer busy\n", id);
+        break;
     default:
-        printf("unknown command\n");
+        printf("Unknown command\n");
     }
 }
 
 void readCommand() {
-    printf("sono qua\n");
     char command[20];
     scanf("%s", command);
     if (!strcmp(command, "list")) {
@@ -320,12 +495,18 @@ void readCommand() {
         commandHelp();
         return;
     }
-    printf("! Invalid operation\n");
+    if (!strcmp(command, "esc")) {
+        commandEsc();
+        return;
+    }
+    printf("[READ COMMAND] Invalid operation\n");
 }
 
 void handleChat(int sd) {
+
+    char path[1024], filename[1024];
     char msg[1024];
-    int sId, i;
+    int sId, rId, i;
     struct device* dev;
     for (i = 0; i < nDev; i++) {
         dev = &devices[i];
@@ -334,14 +515,49 @@ void handleChat(int sd) {
             break;
         }
     }
-    recvMsg(sd, msg);
+    rId = dev->rId;
+    if (recvMsg(sd, msg) == ERROR_CODE) {
+        printf("<ERROR> Something wrong happened\n");
+        FD_CLR(dev->chatSD, &master);
+        close(dev->chatSD);
+        close(sd);
+        //handleDevCrash(sd);
+        return;
+    }
     if (!strncmp(msg, "\\q", 2)) {
         FD_CLR(dev->chatSD, &master);
         close(dev->chatSD);
         devices[sId].busy = 0;
         return;
     }
-    printf("il device %d ha inviato %s", sId, msg);
+    sprintf(path, "./pending_messages");
+    if (stat(path, &st) == -1)
+        mkdir(path, 0700);
+
+    //subdirectory for receiver
+    sprintf(path, "./pending_messages/device_%d", rId);
+    if (stat(path, &st) == -1)
+        mkdir(path, 0700);
+
+    sprintf(filename, "%s/from_%d.txt", path, sId);
+    printf("[CHAT] CreateD file to save messages:\n\t%s\n", filename);
+
+    FILE* fp;
+    if ((fp = fopen(filename, "a")) == NULL) {
+        perror("[CHAT] Error: fopen()");
+        exit(-1);
+    }
+    pend[sId][rId].num++;
+    pend[sId][rId].lastMsgTimestamp = time(NULL);
+    //handle time for message
+
+
+
+    //copy messages in a file
+    fprintf(fp, msg);
+    //printf("\ts_id: %d\tr_id: %d\tn_msgs:  %d\n", s_id, r_id, pending_messages[s_id][r_id].num);
+    fclose(fp);
+
 }
 
 /*----------------------------------------------------------------------*\
@@ -352,8 +568,8 @@ void handleChat(int sd) {
 int main(int argc, char* argv[]) {
     struct sockaddr_in cl_addr;
     int ret, sd, new_sd, len, i;
-
-
+    struct device* dev;
+    system("clear");
     printf("********************* SERVER AVVIATO ********************\n");
 
     switch (argc) {
@@ -366,18 +582,16 @@ int main(int argc, char* argv[]) {
         printf("Syntax error\n");
         exit(-1);
     }
-
+    restoreServer();
     sd = creaSocket();
     ret = listen(sd, 10);
     if (ret < 0) {
         perror("Something went wrong during bind: \n");
         exit(-1);
     }
-
     fdtInit();
     FD_SET(sd, &master);
     fdmax = sd;
-
 
     while (true) {
         printf("Choose operation:\n"
