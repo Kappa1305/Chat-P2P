@@ -27,6 +27,7 @@
 #define USER_BUSY           65527
 #define USER_OFFLINE        65526
 #define USER_NOT_FOUND      65525
+#define SHARE_ERROR         65524
 #define COMMAND_SIGNUP      1
 #define COMMAND_IN          2
 #define COMMAND_HANGING     3
@@ -36,12 +37,6 @@
 #define COMMAND_OUT         7
 #define COMMAND_BUSY        10
 #define COMMAND_NOT_BUSY    11
-
-
-
-
-
-
 
 void sendNum(int sd, int num) {
     uint16_t netNum = htons(num); // network number
@@ -87,41 +82,36 @@ int recvMsg(int sd, char* msg) {
     msg = buffer;
     return 0;
 }
-/*
-void recv_file(int sd, char type[WORD_SIZE], bool show){
-    if(show)
-        printf("[recv_file] start\n");
+
+void recv_file(int sd, char type[WORD_SIZE]){
+
     FILE *fp;
     int n;
     char buffer[BUFFER_SIZE];
 
     char namefile[WORD_SIZE];
     sprintf(namefile, "recv.%s", type);
-    if(show)
-        printf("%s\n", namefile);
 
     fp = fopen(namefile, "w");
 
     while(true){
-        int code = recv_int(sd, false);
+        int code = recvNum(sd, false);
         if(code == OK_CODE){
             n = recv(sd, buffer, BUFFER_SIZE, 0);
             fprintf(fp, "%s", buffer);
             bzero(buffer, BUFFER_SIZE);
         }
         else{
-            if(show)
-                printf("[recv_file] end\n");
             fclose(fp);
             return;
         }
     }
 }
 
-void sendFile(FILE* fp, int sd) {
+void sendFile(int sd,FILE* fp) {
     while (true) {
         if (fgets(buff, BUFFER_SIZE, fp) != NULL) {
-            send_int(OK_CODE, sd);
+            sendNum(sd,OK_CODE);
             if (send(sd, buff, sizeof(buff), 0) == -1) {
                 perror("[SHARE] Error!\n");
                 exit(1);
@@ -129,9 +119,8 @@ void sendFile(FILE* fp, int sd) {
             bzero(buff, BUFFER_SIZE);
         }
         else {
-            send_int(ERR_CODE, sd);
+            sendNum(sd, SHARE_ERROR);
             return;
         }
     }
 }
-*/

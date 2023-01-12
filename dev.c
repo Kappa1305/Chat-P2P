@@ -125,9 +125,16 @@ int createSocket(int port) {
     inet_pton(AF_INET, "127.0.0.1", &srv_addr.sin_addr);
 
     if (connect(sd, (struct sockaddr*)&srv_addr, sizeof(srv_addr)) < 0) {
-        perror("[SOCKET] Something went wrong during connect: \n");
-        perror("[SOCKET] Server might be offline...: \n");
-                exit(1);   
+        if (port == -1) {
+            printf("<ERROR> Server might be offline, try again later...\n");
+            return;
+        }
+        else {
+            printf("<ERROR> Dev might be offline, try again later...\n");
+            // dire al server che il dispositivo è offline
+            return ERROR_CODE;
+        }
+
     }
     return sd;
 }
@@ -220,23 +227,72 @@ void chatCommandUsername() {
 
     }
 }
+void commandShare() {
+    char msg[1024];
+    if (nDevChat == 1) {
+        printf("[device] type <filename> to share\n");
+        system("ls");
+        scanf("%s", msg);
 
-/*void chatCommandShare() {
-    char filename[25];
-    system("ls");
-    scanf("%s", filename);
-    FILE* fp = fopen(filename, "r");
-    if (fp == NULL) {
-        printf("[SHARE] %s doesn't exist\n", filename);
-    }
-    printf("[SHARE] Sending file %s...\n", filename);
-    for (i = 0; i < MAX_DEVICES; i++) {
-        if (devices[i].sd != -1) {
-            sendFile(devices[i].sd, fp);
+        FILE* fp = fopen(msg, "r");
+        if (fp == NULL) {
+            printf("[SHARE] File '%s' does not exists!\n", msg);
+            for (i = 0; i < MAX_DEVICES; i++) {
+                if (devices[i].sd != -1) {
+                    sendNum(devices[i].sd, SHARE_ERROR);
+                }
+            }
+            return;
         }
+
+        //file exists: sending it
+        for (i = 0; i < MAX_DEVICES; i++) {
+            if (devices[i].sd != -1) {
+                sendNum(devices[i].sd, OK_CODE);
+            }
+        }
+        //get file type from name
+        char* name = strtok(msg, ".");
+        char* type = strtok(NULL, ".");
+
+        //send type, than file to other device
+        printf("[SHARE] sending %s file...\n", type);
+        for (j = 0; j < MAX_DEVICES; j++) {
+            if (devices[j].sd) {
+                sendMsg(devices[j].sd, type);
+                send_file(devices[j].sd, fp);
+            }
+        }
+        fclose(fp);
+        printf("[SHARE] File shared!\n");
     }
-    printf("[SHARE] File sent successfuly\n", filename);
-}*/
+    else
+        printf("[SHARE] Command '\\s' is not valid during a group_chat\n");
+}
+
+void commandShareRecv() {
+    if (nDevChat == 1) {
+        printf("[SHARE RECV] Other device is sending you a file: wait...\n");
+
+        //receive OK_CODE to start file transaction, than receive file
+        if ((recvNum(sock)) == SHARE_ERROR) {
+            printf("[SHARE RECV] File transfer failed: sender error!\n");
+            break;
+        }
+
+        //get file type [.txt, .c, .h, ecc.]
+        char type[WORD_SIZE];
+        recvMsg(sock, type);
+
+        //get file and copy in recv.[type]
+        printf("[device] receiving %s file...\n", type);
+        recv_file(sock, type);
+        struct stat st;
+        stat("recv.txt", &st);
+        int size = st.st_size;
+        printf("[device] received %d byte: check 'recv.%s'\n", size, type);
+    }
+}
 
 void handleChat() {
     char msg[1024];
@@ -261,7 +317,7 @@ void handleChat() {
     while (true) {
         read_fds = master;
         if (!select(fdmax + 1, &read_fds, NULL, NULL, NULL)) {
-            perror("[handle_chat] Error: select()\n");
+            perror("[CHAT] Error: select()\n");
             exit(-1);
         }
         for (i = 0; i <= fdmax; i++) {
@@ -297,10 +353,10 @@ void handleChat() {
                         chatCommandUsername();
                         //printf("Inserisci il messaggio da inviare\n");
                         break;
-                        /*case SHARE_CODE:
-                            chatCommandShare();
-                            break;
-    */
+                    case SHARE_CODE:
+                        chatCommandShare();
+                        break;
+
 
                     }
                 }
@@ -383,11 +439,9 @@ void handleChat() {
                         break;
                     case USER_CODE:
                         break;
-                        /*
-                                        if (!strncmp(msg, "\\s", 2)) {
-                                            chatCommandShare();
-                                        }
-                                        }*/
+                    case SHARE_CODE:
+                        chatCommandShareRecv();
+                        break
                     }
                 }
             }
@@ -599,10 +653,15 @@ void commandChat() {
         handleChatServer(serverSD);
         return;
     }
-    sendCommand(serverSD, COMMAND_NOT_BUSY);
-    sendNum(serverSD, thisDev.id);
-    close(serverSD);
     devices[rId].sd = createSocket(rPort);
+    if (devices[rId].sd == ERROR_CODE) { // il dispositivo con cui volevo dialogare è crashato, lo notifico al server
+        serverSD = createSocket(-1);     // e avvio la chat offline
+        sendCommand(serverSD, USER_OFFLINE);
+        sendNum(serverSD, rId);
+        sleep(1);
+        handleChatServer(serverSD);
+        return;
+    }
     sendNum(devices[rId].sd, thisDev.id);
     handleChat();
     serverSD = createSocket(-1);

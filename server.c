@@ -393,17 +393,18 @@ void handleChatRequest(sd) {
 }
 
 
-void out(sd) {
+int out(sd) {
     int id = recvNum(sd);
     if (id == ERROR_CODE) {
         printf("<ERROR> Something wrong happened\n");
         close(sd);
         //handleDevCrash(sd);
-        return;
+        return ERROR_CODE;
     }
     struct device* dev = &devices[id];
     dev->timestampLogout = time(NULL);
     printf("[OUT] Dev %d is now offline\n", id);
+    return id;
 }
 
 void usernameOnline(sd) {
@@ -434,28 +435,37 @@ void recvCommand(int sd) {
     }
     switch (command) {
     case COMMAND_SIGNUP:
-        printf("Command received : signup\n");
+        printf("Command received : [signup]\n");
         signup(sd);
         break;
     case COMMAND_IN:
-        printf("Command received : in\n");
+        printf("Command received : [in]\n");
         login(sd);
         break;
     case COMMAND_HANGING:
-        printf("Command received : hanging\n");
+        printf("Command received : [hanging]\n");
         hanging(sd);
         break;
     case COMMAND_CHAT:
-        printf("Command received : chat\n");
+        printf("Command received : [chat]\n");
         handleChatRequest(sd);
         break;
     case COMMAND_OUT:
-        printf("Command received : out\n");
+        printf("Command received : [out]\n");
         out(sd);
         break;
     case COMMAND_DEVICE_DATA: // USERNAME
-        printf("Command received : device_data\n");
+        printf("Command received : [device data]\n");
         usernameOnline(sd);
+        break;
+         // qualcuno voleva iniziare una chat con un dispositivo ma non risponde, considero la destinazione
+         // offline e inizio una chat con il chiamante
+    case USER_OFFLINE:
+        printf("Command received : [device crashed]\n");
+        id = out(sd); // la out restituisce l'id del dispositivo disconnesso
+        if(id == ERROR_CODE)
+            return;
+        prepareChatOffline(sd, id);
         break;
     case COMMAND_BUSY:
         id = recvNum(sd);
