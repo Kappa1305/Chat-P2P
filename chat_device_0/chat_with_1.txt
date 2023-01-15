@@ -1,0 +1,27 @@
+a [Sat 2023-01-14 19:24:04 CET]: we
+a [Sat 2023-01-14 19:24:07 CET]: come va?
+a [Sat 2023-01-14 19:25:23 CET]: ei
+b [Sat 2023-01-14 19:25:25 CET]:  va?
+b [Sat 2023-01-14 19:25:25 CET]: [Aei
+a [Sat 2023-01-14 19:25:30 CET]: come va?
+b [Sat 2023-01-14 19:25:34 CET]: tutto bene, tu?
+a [Sat 2023-01-14 19:25:37 CET]: bene da
+a [Sat 2023-01-14 19:25:40 CET]: i*
+a [Sat 2023-01-14 19:26:22 CET]: ei
+b [Sat 2023-01-14 19:26:24 CET]: ciaooo
+a [Sat 2023-01-14 19:26:27 CET]: come va?
+a [Sat 2023-01-14 19:28:45 CET]: oiii
+b [Sat 2023-01-14 19:28:51 CET]: come va?
+a [Sat 2023-01-14 22:19:23 CET]: we
+b [Sat 2023-01-14 22:19:26 CET]: come va??
+a [Sat 2023-01-14 22:19:30 CET]: tutto bene, tu??
+a [Sat 2023-01-14 22:19:32 CET]: bene dai
+a [Sun 2023-01-15 00:46:28 CET]: oi
+a [Sun 2023-01-15 00:46:31 CET]: ei
+ÿþÿþÿþÿþÿþÿþÿþÿþa [Sun 2023-01-15 00:49:31 CET]: ei
+a [Sun 2023-01-15 00:49:34 CET]: ei
+ÿþÿþÿþÿþÿþÿþÿþÿþa [Sun 2023-01-15 00:49:40 CET]: ei
+a [Sun 2023-01-15 00:52:28 CET]: we
+b [Sun 2023-01-15 00:52:30 CET]: ei
+a [Sun 2023-01-15 00:54:16 CET]: ei
+b [Sun 2023-01-15 00:54:19 CET]: ei
