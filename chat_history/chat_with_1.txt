@@ -1,3 +1,0 @@
-b [Sat 2023-01-14 19:11:40 CET]: we
-a [Sat 2023-01-14 19:11:43 CET]: come va?
-b [Sat 2023-01-14 19:24:11 CET]: tutto bene, tu?

@@ -39,8 +39,11 @@
 #define COMMAND_SHOW        6
 #define COMMAND_OUT         7
 #define COMMAND_ADD         8
-#define COMMAND_BUSY        10
-#define COMMAND_NOT_BUSY    11
+#define COMMAND_BUSY        9
+#define COMMAND_NOT_BUSY    10
+#define NOTIFY_LOGOUT_TS    11
+#define GROUP_CHAT          1
+
 
 int createSocket(int port) {
     int sd;
@@ -63,22 +66,28 @@ int createSocket(int port) {
     inet_pton(AF_INET, "127.0.0.1", &srv_addr.sin_addr);
 
     if (connect(sd, (struct sockaddr*)&srv_addr, sizeof(srv_addr)) < 0) {
-        printf("<ERROR> Dev might be offline, try again later...\n");
+        printf("<ERROR> Dev on port %d might be offline, try again later...\n", port);
         // dire al server che il dispositivo è offline
         return ERROR_CODE;
     }
     return sd;
 }
 
-void sendNum(int sd, int num) {
+int sendNum(int sd, int num) {
     uint16_t netNum = htons(num); // network number
-    send(sd, (void*)&netNum, sizeof(uint16_t), 0);
+    // MSG_NOSIGNAL mi permette di evitare che il processo in esecuzione
+    // venga interrotto quando il ricevitore disattiva il socket
+    if (send(sd, (void*)&netNum, sizeof(uint16_t), MSG_NOSIGNAL) == -1) {
+        perror("<Error> Send num \n");
+        return(ERROR_CODE);
+    }
+    return 0;
 }
 
 int recvNum(int sd, int* num) {
     uint16_t netNum; // network number
     if (!recv(sd, (void*)&netNum, sizeof(uint16_t), 0)) {
-        perror("Error recv number\n");
+        perror("<ERROR> Recv number\n");
         return ERROR_CODE;
     }
     *num = ntohs(netNum);
@@ -92,11 +101,16 @@ int sendMsg(int sd, char* msg) {
     strcpy(buffer, msg);
 
     sendNum(sd, len);
-
-    if (!send(sd, (void*)buffer, strlen(buffer), 0)) {
-        perror("Error send msg \n");
+    printf("problema qua\n");
+    // MSG_NOSIGNAL mi permette di evitare che il processo in esecuzione
+    // venga interrotto quando il ricevitore disattiva il socket
+    if (send(sd, (void*)buffer, strlen(buffer), MSG_NOSIGNAL) == -1) {
+    printf("non arriva qua1\n");
+        perror("<Error> Send msg \n");
         return(ERROR_CODE);
     }
+    printf("non arriva qua2\n");
+
     return 0;
 }
 
@@ -106,7 +120,7 @@ int recvMsg(int sd, char* msg) {
     char buffer[len];
 
     if (!recv(sd, (void*)&buffer, len, 0)) {
-        perror("Error rcv msg \n");
+        perror("<Error> Recv msg\n");
         return(ERROR_CODE);
     }
     buffer[len] = '\0';
@@ -116,7 +130,6 @@ int recvMsg(int sd, char* msg) {
 }
 
 void recvFile(int sd, char type[WORD_SIZE]) {
-
     FILE* fp;
     char buffer[BUFFER_SIZE];
 

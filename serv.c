@@ -27,7 +27,7 @@ struct device {
     char* password;
     int port;
     time_t timestampLogin;
-    time_t timestampLogout;
+    bool online;
     bool busy;
     int id;
     int chatSD; // utilizzato per le chat tra dev e dev offline
@@ -98,7 +98,12 @@ void restoreServer() {
         d->busy = atoi(b);                       //busy
 
         b = strtok(NULL, " ");
+        d->busy = strtoul(b);                       //timestamp login
+
+
+        b = strtok(NULL, " ");
         d->notify = atoi(b);                     //notify
+        printf("notify a %d\n", d->notify);
 
         b = strtok(NULL, " ");
         d->port = atoi(b);                       //port
@@ -132,6 +137,24 @@ void restoreServer() {
     fclose(fp);
 }
 
+void registerLog(bool login, int id, int ts) {
+    char dir_path[15];
+    sprintf(dir_path, "./log_register");
+    if (stat(dir_path, &st) == -1)
+        mkdir(dir_path, 0700);
+    char filename[WORD_SIZE];
+    sprintf(filename, "%s/dev_%d.txt", dir_path, id);
+    FILE* fp = fopen(filename, "a");
+    if (fp) {
+        if (login)
+            fprintf(fp, "\n%d %u ", devices[id].port, ts);
+        else
+            fprintf(fp, "%u", ts);
+        fclose(fp);
+        printf("[LOG REGISTER] Log completed\n");
+    }
+}
+
 // prende in ingresso l'username di un dispositivo e restituisce
 // il suo id
 int findDevice(char* username) {
@@ -155,7 +178,7 @@ void devAdd(char username[1024], char password[1024]) {
     dev->password = malloc(sizeof(password) + 1);
     strcpy(dev->username, username);
     strcpy(dev->password, password);
-    dev->timestampLogout = 0;
+    dev->online = false;
     dev->timestampLogin = 0;
     nDev++;
 }
@@ -175,7 +198,10 @@ void notifyShow(int id) {
 }
 
 // chiamata al momento del login per aggiornare la struttura dati del dev
-void devUpdate(int id, int port) {
+void devUpdate(int id, int port, int sd) {
+    int code;
+    char buff[BUFFER_SIZE];
+    int ts;
     struct device* dev = &devices[id];
     dev->busy = false;
     dev->port = port;
@@ -183,8 +209,23 @@ void devUpdate(int id, int port) {
     if (dev->notify) {
         notifyShow(id);
     }
+    dev->online = true;
     dev->notify = false;
-    // dev->timestampLogout = 0;
+    if (recvNum(sd, &code) == ERROR_CODE) {
+        printf("<ERROR> [IN] Something wrong happened...\n");
+        close(sd);
+        return;
+    }
+    if (code == NOTIFY_LOGOUT_TS) {
+        printf("Command received : [LOGOUT TS]\n");
+        recvFile(sd, "txt");
+        FILE* fp = fopen("./recv.txt", "r");
+        fgets(buff, BUFFER_SIZE, fp);
+        ts = atoi(buff);
+        printf("mi sta passando i dati l'id %d\n", id);
+        registerLog(false, id, ts);
+    }
+    registerLog(true, id, (unsigned)time(NULL));
 }
 
 // chiamata al momento della registrazione per controllare che l'username
@@ -258,8 +299,8 @@ void commandList() {
     printf("username\tport\tlogin timestamp\n\n");
     for (i = 0; i < nDev; i++) {
         dev = &devices[i];
-        if (dev->timestampLogin > dev->timestampLogout)
-            // username     port    timestampLogin
+        if (dev->online)
+            // username     port    timestampLogintore
             printf("%s\t\t%u\t%d\n", dev->username, dev->port, (unsigned)dev->timestampLogin);
     }
 }
@@ -283,9 +324,6 @@ void commandEsc() {
             dev->password, (unsigned)dev->timestampLogin,
             dev->busy, dev->notify,
             dev->port
-            /* dev->time_login,
-             dev->port,
-            d->pend_dev_before_logout, d->pend_dev*/
         );
     }
     fclose(fp);
@@ -324,17 +362,17 @@ void login(sd) {
     }
     id = loginCheck(username, password);
     if (id == -1) {
-        printf("[LOGIN] Fail\n");
+        printf("[IN] Fail\n");
         sendNum(sd, ERROR_CODE);
     }
     else {
-        printf("[LOGIN] Success\n");
+        printf("[IN] Success\n");
         id = findDevice(username);
         /*if (id == -1) {
             id = deviceSetup(username);
         }*/
         sendNum(sd, id);
-        devUpdate(id, port);
+        devUpdate(id, port, sd);
     }
 }
 
@@ -422,7 +460,7 @@ int deviceData(sd) {
     sendNum(sd, rId);
 
     // se l'utente è offline o busy lo segnalo sulla rPort
-    if (dev->timestampLogin <= dev->timestampLogout) {
+    if (!dev->online) {
         sendNum(sd, USER_OFFLINE);
         return rId;
     }
@@ -463,7 +501,7 @@ void show(sd) {
 }
 
 int out(sd) {
-    int id; 
+    int id;
     recvNum(sd, &id);
     if (id == ERROR_CODE) {
         printf("<ERROR> Something wrong happened\n");
@@ -471,21 +509,20 @@ int out(sd) {
         //handleDevCrash(sd);
         return ERROR_CODE;
     }
-    struct device* dev = &devices[id];
-    dev->timestampLogout = time(NULL);
+    devices[id].online = false;
+
     printf("[OUT] Dev %d is now offline\n", id);
+    registerLog(false, id, (unsigned)time(NULL));
     return id;
 }
 
 
 void usernameOnline(sd) {
     int i;
-    struct device* dev;
     char emptyLine[] = "\n";
     for (i = 0; i < nDev; i++) {
-        dev = &devices[i];
-        if (dev->timestampLogin > dev->timestampLogout) {
-            sendMsg(sd, dev->username);
+        if (devices[i].online) {
+            sendMsg(sd, devices[i].username);
         }
     }
     // il dispotivo sa da protocollo che quando ottiene una riga vuota significa
@@ -501,7 +538,6 @@ void recvCommand(int sd) {
     if (command == ERROR_CODE) {
         printf("<ERROR> Something wrong happened\n");
         close(sd);
-        //handleDevCrash(sd);
         return;
     }
     switch (command) {
@@ -522,7 +558,7 @@ void recvCommand(int sd) {
         // se la funzione restituisce 1 il dispotivo è offline o busy, gestisco la chat offline
         id = deviceData(sd);
         if (id >= 0) {
-            printf("[CHAT] %d is busy or offline, preparing for offline chat\n", id);
+            printf("[CHAT] %d is busy or offline... preparing for offline chat\n", id);
             prepareChatOffline(sd, id);
         }
 
@@ -546,7 +582,7 @@ void recvCommand(int sd) {
         // qualcuno voleva iniziare una chat con un dispositivo ma non risponde, considero la destinazione
         // offline e inizio una chat con il chiamante
     case USER_OFFLINE:
-        printf("Command received : [DEICE CRASHED]]\n");
+        printf("Command received : [DEVICE CRASHED]]\n");
         id = out(sd); // la out restituisce l'id del dispositivo disconnesso
         if (id == ERROR_CODE)
             return;
@@ -574,6 +610,7 @@ void recvCommand(int sd) {
         devices[id].busy = false;
         printf("Command received : %d is no longer busy\n", id);
         break;
+
     default:
         printf("Unknown command\n");
     }
@@ -634,7 +671,7 @@ void handleChat(int sd) {
         mkdir(path, 0700);
 
     sprintf(filename, "%s/from_%d.txt", path, sId);
-    printf("[CHAT] CreateD file to save messages:\n\t%s\n", filename);
+    printf("[CHAT] Message saved in :\n\t%s\n", filename);
 
     FILE* fp;
     if ((fp = fopen(filename, "a")) == NULL) {
@@ -703,16 +740,11 @@ int main(int argc, char* argv[]) {
                 }
                 if (i == sd) {       //device request  
                     addrlen = sizeof(cl_addr);
-
                     // Accetto nuove connessioni
                     new_sd = accept(sd, (struct sockaddr*)&cl_addr, &addrlen);
 
                     // Attendo risposta
                     recvCommand(new_sd);
-                    if (ret < 0) {
-                        perror("Errore in fase di ricezione: \n");
-                        continue;
-                    }
                     continue;
                 }
                 // un utente sta mandando un messaggio a un dev offline

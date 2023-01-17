@@ -51,7 +51,7 @@ int fdmax;
 |       *** FUNZIONI GENERALI ***        |
 \*--**********************************--*/
 
-
+// inizializza i set per la select
 void fdtInit() {
     FD_ZERO(&master);
     FD_ZERO(&read_fds);
@@ -62,7 +62,7 @@ void fdtInit() {
     printf("[FDT INIT] Done\n");
 }
 
-
+// crea i socket su cui i device ascolterranno
 void createListeningSocket() {
     listeningSocket = socket(AF_INET, SOCK_STREAM, 0);
     if (listeningSocket == -1) {
@@ -93,14 +93,29 @@ void createListeningSocket() {
     printf("[CREATE LISTENING SOCKET] Done\n");
 }
 
-// chiamata dal dispositivo aggiunto alla chat quando un dispositivo 
-//(non quello che ha chiamato la \a) desidera connettersi oppure quando 
-// il server vuole notificare che qualcuno ha effettuato la show su dei 
-// messaggi pendenti del thisDev
-
 void handleRequest(bool inChat);
 
-int requestDeviceData(int serverSD, int* id, int* port);
+int requestDeviceData(int serverSD, char* username, int* id, int* port);
+
+bool rubricControl(char* username) {
+    char filename[1024], buff[1024];
+    sprintf(filename, "rubric/%s.txt", thisDev.username);
+    FILE* fp = fopen(filename, "r");
+    if (fp)
+    {
+        while (fgets(buff, sizeof(buff), fp)) {
+            if (!strncmp(buff, username, strlen(username))) {
+                printf("[ADDRESS BOOK] Username found\n");
+                return true;
+            }
+        }
+    }
+    else
+        printf("[ADDRESS BOOK] Not found\n");
+    printf("[ADDRESS BOOK] Username not found\n");
+    return false;
+}
+
 
 // controlla se l'user ha inserito un comando nella chat, in caso affermativo ne restituisce il codice
 int checkChatCommand(char* cmd) {
@@ -126,6 +141,11 @@ int checkChatCommand(char* cmd) {
     // default: nessun comando, è un semplica messaggio
     return OK_CODE;
 }
+
+
+/*--**********************************--*\
+|        ***  COMANDI CHAT  ***          |
+\*--**********************************--*/
 
 void chatCommandHelp() {
     printf(
@@ -154,6 +174,7 @@ void chatCommandQuit() {
     return;
 }
 
+
 // chiamata quando qualche errore è avvenuto durante la add in modo che gli altri dispositivi non stiano
 // infinitamente l'id del dispositivo da aggiungere
 void notifyAddError() {
@@ -169,15 +190,34 @@ void chatCommandAdd(sd) {
     // dispositivo chiede al server id e porta del dispositivo da aggiungere
     // inviandogli l'username
     int rId, rPort, i, serverSD;
+    char username[1024];
+
+    printf("[CHAT] Insert <username> to add\n");
+    scanf("%s", username);
+
+    if (!strcmp(username, thisDev.username)) {
+        printf("<ERROR> You can't chat with yourself\n");
+        notifyAddError();
+        return;
+    }
+    // controllo che lo username sia nella rubrica
+    if (!rubricControl(username)) {
+        sleep(1);
+        notifyAddError();
+        return;
+    }
+
     serverSD = createSocket(server.port);
-    sendNum(serverSD, COMMAND_ADD);
+    // controllo che il server sia ancora online
     // se il server è offline invio a tutti un messaggio di errore
     // che indica che la add non può essere completata
     if (serverSD == ERROR_CODE) {
         notifyAddError();
         return;
     }
-    if (requestDeviceData(serverSD, &rId, &rPort) == ERROR_CODE) {
+
+    sendNum(serverSD, COMMAND_ADD);
+    if (requestDeviceData(serverSD, username, &rId, &rPort) == ERROR_CODE) {
         notifyAddError();
         return;
     }
@@ -205,10 +245,13 @@ void chatCommandAdd(sd) {
         }
     }
 
-    // crea un socket col dispositivo aggiunto e lo informa del suo id
+    // crea un socket col dispositivo aggiunto e lo informa del proprio id
     devices[rId].sd = createSocket(rPort);
     sendNum(devices[rId].sd, thisDev.id);
-    sendNum(devices[rId].sd, 1);
+
+    // questa send notifica al dispositivo che sta per entrare in una chat di gruppo
+    // ciò implica che non dovrà stampare la history della chat
+    sendNum(devices[rId].sd, GROUP_CHAT);
     // aggiunge il socket del nuovo dispositivo a quelli di ascolto
     FD_SET(devices[rId].sd, &master);
     if (devices[rId].sd > fdmax) { fdmax = devices[rId].sd; }
@@ -218,24 +261,29 @@ void chatCommandAdd(sd) {
     return;
 }
 
+// comando chiamato per visualizzare gli utenti online
 void chatCommandUsername() {
     char username[1024];
     int serverSD = createSocket(server.port);
+    if (serverSD == ERROR_CODE) {
+        return;
+    }
     sendNum(serverSD, COMMAND_DEVICE_DATA);
     printf("[USERS ONLINE]\n");
+    // il server invia la lista di utenti online uno per uno, il device non deve far altro che ricevere e stampare
     while (1) {
         if (recvMsg(serverSD, username) == ERROR_CODE) {
             printf("<ERROR> Something wrong happened\n");
             close(serverSD);
             return;
         }
-
+        // il carattere di fine stringa indica che la lista di username è terminata (così è deciso da protocollo)
         if (username[0] == '\n')
             break;
         printf("%s\n", username);
-
     }
 }
+// comando chiamato per condividere un file con gli altri utenti in chat
 void chatCommandShare() {
     int i, ret;
     char msg[1024];
@@ -258,22 +306,24 @@ void chatCommandShare() {
         return;
     }
 
-    // tutto bene, invio a tutti un ok_code, il tipo del file e il file
+    // tutto bene, invio a tutti un ok_code, il tipo del file ed il file
+    char* name = strtok(msg, ".");
     char* type = strtok(NULL, ".");
-    printf("[SHARE] sending %s file...\n", type);
+    printf("[SHARE] sending %s type %s...\n", name, type);
 
     for (i = 0; i < MAX_DEVICES; i++) {
         if (devices[i].sd != -1) {
+            // notifico che tutto è andato a buon fine e si può dunque effettuare il trasferimento
             sendNum(devices[i].sd, OK_CODE);
-            sendMsg(devices[i].sd, type);
-            ret = sendFile(devices[i].sd, fp);
+            // dico che tipo di file debbano aspettarsi
 
+            ret = sendFile(devices[i].sd, fp);
             if (ret == ERROR_CODE) {
                 printf("<ERROR> Something wrong happened\n");
                 return;
             }
             sleep(1);
-            // se non inizializassi il puntatore a carattere nel file la prossima lettura inizierebbe dall'ultimo carattere
+            // se non inizializzassi il puntatore a carattere nel file la prossima lettura inizierebbe dall'ultimo carattere del file
             // => leggerebbe 0 bytes
             fseek(fp, 0, SEEK_SET);
         }
@@ -282,12 +332,13 @@ void chatCommandShare() {
     printf("[SHARE] File shared!\n");
 }
 
-
+// funzione chiamata per mostrare la history della chat passata con l'altro utente
 void readChat(int id) {
     char filename[WORD_SIZE];
     sprintf(filename, "chat_device_%d/chat_with_%d.txt", thisDev.id, id);
     FILE* fp = fopen(filename, "r");
     if (fp) {
+        // legge ogni riga del file e la stampa
         char buff[BUFFER_SIZE];
         while (fgets(buff, BUFFER_SIZE, fp) != NULL)
             printf("%s", buff);
@@ -295,23 +346,28 @@ void readChat(int id) {
     }
 }
 
+// funzione chiamata dal dispositivo che deve ricevere un file in chat
 void chatCommandShareRecv(sd) {
     printf("[SHARE RECV] Other device is sending you a file: wait...\n");
-    //receive OK_CODE to start file transaction, than receive file
     int ret;
+    // aspetta di ricevere OK_CODE per sapere che il dispositivo che sta inviando non ha avuto problemi
     recvNum(sd, &ret);
     if (ret == SHARE_ERROR) {
         printf("[SHARE RECV] File transfer failed: sender error!\n");
         return;
     }
 
-    //get file type [.txt, .c, .h, ecc.]
-    char* type = "txt";
-    recvMsg(sd, type);
-    //get file and copy in recv.[type]
+    // ottiene il tipo di file
+    char type[10];
+    if (recvMsg(sd, type) == ERROR_CODE) {
+        printf("[SHARE RECV] File transfer failed: sender error!\n");
+        return;
+    }
+
     printf("[device] receiving %s file...\n", type);
     recvFile(sd, type);
     struct stat st;
+    // recv.txt è il file in cui la recvFile salva il file
     stat("recv.txt", &st);
     int size = st.st_size;
     printf("[device] received %d byte: check 'recv.%s'\n", size, type);
@@ -368,7 +424,7 @@ void handleChat(int id, bool groupChat) {
     sendNum(serverSD, thisDev.id);
     close(serverSD);
     system("clear");
-    if(!groupChat)
+    if (!groupChat)
         readChat(id);
     while (true) {
         read_fds = master;
@@ -395,7 +451,9 @@ void handleChat(int id, bool groupChat) {
                         addMsgData(msg);
                         for (j = 0; j < MAX_DEVICES; j++) {
                             if (devices[j].sd != -1) {
-                                sendMsg(devices[j].sd, msg);
+                                if(sendMsg(devices[j].sd, msg) == ERROR_CODE){
+                                    devices[j].sd = -1;
+                                }
                             }
                         }
                         if (nDevChat == 1) {
@@ -442,8 +500,7 @@ void handleChat(int id, bool groupChat) {
                 }
                 // ricevuto un messaggio da qualcun'altro
                 else if (i != listeningSocket) {
-                    recvNum(i, &code);
-                    if (code == ERROR_CODE) {
+                    if (recvNum(i, &code) == ERROR_CODE) {
                         // la handleDevCrash restituisce 1 se devo terminare la chat
                         if (handleDevCrash(i)) {
                             return;
@@ -507,7 +564,6 @@ void handleChat(int id, bool groupChat) {
                         break;
 
                     case HELP_CODE:
-                        chatCommandHelp();
                         break;
 
                     case ADD_CODE:
@@ -572,9 +628,14 @@ void handleChatServer(int serverSD) {
             fgets(msg, 1024, stdin);
         } while (msg[0] == '\n');
         code = checkChatCommand(msg);
-
+        if (code == OK_CODE)
+            addMsgData(msg);
         if (code == OK_CODE || code == QUIT_CODE) {
-            sendMsg(serverSD, msg);
+            if (sendMsg(serverSD, msg) == ERROR_CODE) {
+                printf("<ERROR> Server might be offline\n");
+                close(serverSD);
+                return;
+            }
         }
         switch (code) {
         case OK_CODE:
@@ -587,6 +648,11 @@ void handleChatServer(int serverSD) {
         }
     }
 }
+
+// chiamata dal dispositivo aggiunto alla chat quando un dispositivo 
+//(non quello che ha chiamato la \a) desidera connettersi oppure quando 
+// il server vuole notificare che qualcuno ha effettuato la show su dei 
+// messaggi pendenti del thisDev
 
 void handleRequest(bool inChat) {
     int chatSD, sId; // sender id
@@ -606,10 +672,10 @@ void handleRequest(bool inChat) {
         return;
     }
     devices[sId].sd = chatSD;
-    recvNum(devices[sId].sd, &groupChat);
     FD_SET(devices[sId].sd, &master);
     if (devices[sId].sd > fdmax) { fdmax = devices[sId].sd; }
     if (!inChat) {
+        recvNum(devices[sId].sd, &groupChat);
         handleChat(sId, groupChat);
         close(devices[sId].sd);
     }
@@ -646,10 +712,11 @@ void commandIn() {
     if (ret == ERROR_CODE) {
         printf("[IN] Failed\n");
     }
+
     else {
         printf("[IN] Success\n");
-        printf("********************* DEVICE %d ONLINE ********************\n", ret);
         createListeningSocket();
+        printf("********************* DEVICE %d ONLINE ********************\n", ret);
         thisDev.id = ret;
         thisDev.logged = true;
         thisDev.username = malloc(sizeof(username));
@@ -659,8 +726,26 @@ void commandIn() {
         sprintf(dir_path, "./chat_device_%d", thisDev.id);
         if (stat(dir_path, &st) == -1)
             mkdir(dir_path, 0700);
+
+        char filename[1024];
+        sprintf(filename, "saved_logout/logout_dev_%d.txt", thisDev.id);
+        FILE* fp = fopen(filename, "r");
+        if (fp) {
+            printf("[LOG REGISTER] Notifying server over my last logout TS...\n");
+            sendNum(serverSD, NOTIFY_LOGOUT_TS);
+            sendFile(serverSD, fp);/*
+            char buff[BUFFER_SIZE];
+            fgets(buff, BUFFER_SIZE, fp);
+            buff = atoi(buff);
+            sendNum(serverSD, buff);*/
+            fclose(fp);
+            remove(filename);
+            close(serverSD);
+            printf("[LOG REGISTER] Notifying completed\n");
+        }
+        else
+            sendNum(serverSD, OK_CODE);
     }
-    close(serverSD);
 
 }
 
@@ -678,7 +763,9 @@ void commandSignup() {
     scanf("%s", password);
     server.port = 4242;
     serverSD = createSocket(server.port);
-
+    if (serverSD == ERROR_CODE) {
+        return;
+    }
     sendNum(serverSD, COMMAND_SIGNUP);
 
     sendMsg(serverSD, username);
@@ -703,14 +790,23 @@ void commandHanging() {
     int numPending;
     char timestamp[80];
     int serverSD = createSocket(server.port);
+    sleep(1);
+    if (serverSD == ERROR_CODE)
+        return;
+
+
     sendNum(serverSD, COMMAND_HANGING);
+
     sendNum(serverSD, thisDev.id);
+
     while (true) {
         if (recvMsg(serverSD, username) == ERROR_CODE) {
+
             printf("<ERROR> Something wrong happened\n");
             close(serverSD);
             return;
         }
+
         if (username[0] == '\n')
             break;
         recvNum(serverSD, &numPending);
@@ -733,10 +829,9 @@ void commandHanging() {
 
 // CHAT
 
-int requestDeviceData(int serverSD, int* id, int* port) {
-    char username[1024];
-    printf("[CHAT] Insert <username>\n");
-    scanf("%s", username);
+int requestDeviceData(int serverSD, char* username, int* id, int* port) {
+    //printf("[CHAT] Insert <username>\n");
+    //scanf("%s", username);
     if (sendMsg(serverSD, username) == ERROR_CODE) {
         printf("<ERROR> Something wrong happened\n");
         close(serverSD);
@@ -758,16 +853,31 @@ int requestDeviceData(int serverSD, int* id, int* port) {
     return 0;
 }
 
+
+
 void commandChat() {
 
     // notifico al server il bisogno di iniziare una chat
     int rPort, rId;
+    char username[1024];
+    printf("[CHAT] Insert <username> to chat with\n");
+    scanf("%s", username);
+    if (!strcmp(username, thisDev.username)) {
+        printf("<ERROR> You can't chat with yourself\n");
+        return;
+    }
+    if (!rubricControl(username)) {
+        return;
+    }
     int serverSD = createSocket(server.port);
+    if (serverSD == ERROR_CODE) {
+        return;
+    }
     sendNum(serverSD, COMMAND_CHAT);
 
     // chiamo la requestDeviceData che assegna a rId e rPort i valori relativi al dispositivo chiamato
     // altrimenti assegna valori in base al problema
-    if (requestDeviceData(serverSD, &rId, &rPort) == ERROR_CODE) {
+    if (requestDeviceData(serverSD, username, &rId, &rPort) == ERROR_CODE) {
         close(serverSD);
         return;
     }
@@ -815,6 +925,9 @@ void commandChat() {
 void commandShow() {
     char username[1024], type[5] = { "txt" };;
     int ret, serverSD = createSocket(server.port);
+    if (serverSD == ERROR_CODE) {
+        return;
+    }
     printf("[SHOW] Insert <username>\n");
     // indico di quale dispositivo voglio leggere i messaggi inviatimi
     scanf("%s", username);
@@ -850,8 +963,22 @@ void commandShow() {
 void commandOut() {
     int serverSD = createSocket(server.port);
     // se il server è offline mi salvo l'istante di logout
-    if (serverSD != ERROR_CODE) {
-        printf("Il server è offline, salvo il mio istante di logout in un file\n");
+    if (serverSD == ERROR_CODE) {
+        printf("[OUT] Server offline... Saving logout timestamp...\n");
+        struct stat st = { 0 };
+        char dir_path[15];
+        sprintf(dir_path, "./saved_logout");
+        if (stat(dir_path, &st) == -1)
+            mkdir(dir_path, 0700);
+        char filename[WORD_SIZE];
+        sprintf(filename, "%s/logout_dev_%d.txt", dir_path, thisDev.id);
+        FILE* fp = fopen(filename, "w");
+        if (fp) {
+            fprintf(fp, "%u", (unsigned)time(NULL));
+            fclose(fp);
+            printf("[OUT] Saving completed\n");
+        }
+
     }
     else {
         sendNum(serverSD, COMMAND_OUT);
@@ -928,18 +1055,15 @@ int main(int argc, char* argv[]) {
 
     while (1) {
         if (!thisDev.logged)
-            printf("Choose operation:\n"
+            printf("[OPERATION] Choose operation:\n"
                 "- signup <server port> <username> <password>\n"
-                "- in <server port> <username> <password>\n"
-                "> ");
+                "- in <server port> <username> <password>\n");
         else
-            printf("Choose operation:\n"
+            printf("[OPERATION] Choose operation:\n"
                 "- hanging\n"
                 "- show <username>\n"
                 "- chat <username>\n"
-                "- share <file_name>\n"
-                "- out\n"
-                "> ");
+                "- out\n");
         read_fds = master;
         if (select(fdmax + 1, &read_fds, NULL, NULL, NULL) == -1) {
             perror("[device] error select() ");
