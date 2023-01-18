@@ -73,6 +73,7 @@ int createSocket(int port) {
     return sd;
 }
 
+// funzione chiamata quando si vuole inviare un numero (solo positivo)
 int sendNum(int sd, int num) {
     uint16_t netNum = htons(num); // network number
     // MSG_NOSIGNAL mi permette di evitare che il processo in esecuzione
@@ -84,6 +85,7 @@ int sendNum(int sd, int num) {
     return 0;
 }
 
+// funzione chiamata quando si vuole ricevere un numero
 int recvNum(int sd, int* num) {
     uint16_t netNum; // network number
     if (!recv(sd, (void*)&netNum, sizeof(uint16_t), 0)) {
@@ -94,26 +96,25 @@ int recvNum(int sd, int* num) {
     return 0;
 }
 
-
+// funzione chiamata quando si vuole inviare un messaggio, prima si accorda col ricevitore 
+// riguardo la lunghezza del messaggio
 int sendMsg(int sd, char* msg) {
     int len = strlen(msg);
     char buffer[len];
     strcpy(buffer, msg);
 
     sendNum(sd, len);
-    printf("problema qua\n");
     // MSG_NOSIGNAL mi permette di evitare che il processo in esecuzione
     // venga interrotto quando il ricevitore disattiva il socket
     if (send(sd, (void*)buffer, strlen(buffer), MSG_NOSIGNAL) == -1) {
-    printf("non arriva qua1\n");
         perror("<Error> Send msg \n");
         return(ERROR_CODE);
     }
-    printf("non arriva qua2\n");
-
     return 0;
 }
 
+// funzione chiamata quando si vuole ricevitore un messaggio, prima si accorda col trasmettitore 
+// riguardo la lunghezza del messaggio
 int recvMsg(int sd, char* msg) {
     int len;
     recvNum(sd, &len);
@@ -129,33 +130,12 @@ int recvMsg(int sd, char* msg) {
     return 0;
 }
 
-void recvFile(int sd, char type[WORD_SIZE]) {
-    FILE* fp;
-    char buffer[BUFFER_SIZE];
-
-    char namefile[WORD_SIZE];
-    sprintf(namefile, "recv.%s", type);
-    fp = fopen(namefile, "w");
-
-    while (true) {
-        int code;
-        recvNum(sd, &code);
-        if (code == OK_CODE) {
-            recv(sd, buffer, BUFFER_SIZE, 0);
-            fprintf(fp, "%s", buffer);
-            bzero(buffer, BUFFER_SIZE);
-        }
-        else {
-            fclose(fp);
-            return;
-        }
-    }
-}
-
+// funzione chiamata quando si vuole inviare un file
 int sendFile(int sd, FILE* fp) {
     char buff[BUFFER_SIZE] = { 0 };
     while (true) {
         if (fgets(buff, 4096, fp) != NULL) {
+            // prima invia un segnalo per convalidare che la sendFile verrà eseguita (il file esiste)
             sendNum(sd, OK_CODE);
             if (send(sd, buff, sizeof(buff), 0) == -1) {
                 perror("[SHARE] Error!\n");
@@ -166,6 +146,31 @@ int sendFile(int sd, FILE* fp) {
         else {
             sendNum(sd, SHARE_ERROR);
             return 0;
+        }
+    }
+}
+
+// funzione chiamata quando si vuole inviare un file
+void recvFile(int sd, char type[WORD_SIZE]) {
+    FILE* fp;
+    char buffer[BUFFER_SIZE];
+
+    char namefile[WORD_SIZE];
+    sprintf(namefile, "recv.%s", type);
+    fp = fopen(namefile, "w");
+
+    while (true) {
+        int code;
+        // prima si assicura che la send verrà eseguita
+        recvNum(sd, &code);
+        if (code == OK_CODE) {
+            recv(sd, buffer, BUFFER_SIZE, 0);
+            fprintf(fp, "%s", buffer);
+            bzero(buffer, BUFFER_SIZE);
+        }
+        else {
+            fclose(fp);
+            return;
         }
     }
 }

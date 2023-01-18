@@ -15,8 +15,12 @@
 #define MESSAGE_LEN 20 // Lunghezza del messaggio dal client
 
 
-fd_set master;          //main set: managed with macro 
-fd_set read_fds;        //read set: managed from select()
+/*--**********************************--*\
+|        *** STRUTTURE DATI ***          |
+\*--**********************************--*/
+
+fd_set master;          //main set: gestita con le macro
+fd_set read_fds;        //read set: gestita dalla select()
 int fdmax;
 
 
@@ -57,16 +61,17 @@ void fdtInit() {
     printf("[FDT] fdt_init: set init done!\n");
 }
 
+// traduce il timestamp da time_t (unsigned) a formato umano
 void timestampTranslate(time_t timestamp, char* buf) {
     struct tm* ts;
     ts = localtime(&timestamp);
     strftime(buf, sizeof(buf), "%X", ts);
 }
 
-// avvio del server
+// avvio del server, controllo se esiste un file da cui recuperare informazioni precendenti
 void restoreServer() {
     int i, j;
-    char buff[1024];
+    char buff[1024], *eptr; // eptr necessario per la conversione da stringa a unsigned di ts
     char* b;
     FILE* fp = fopen("restoreServer.txt", "r");
 
@@ -98,18 +103,18 @@ void restoreServer() {
         d->busy = atoi(b);                       //busy
 
         b = strtok(NULL, " ");
-        d->busy = strtoul(b);                       //timestamp login
+        d->busy = strtoul(b, &eptr, 10);         //timestamp login
 
 
         b = strtok(NULL, " ");
         d->notify = atoi(b);                     //notify
-        printf("notify a %d\n", d->notify);
 
         b = strtok(NULL, " ");
         d->port = atoi(b);                       //port
     }
     fclose(fp);
-
+    
+    // controllo se ho un file che indica i messaggi pendenti tra gli utenti
     fp = fopen("pending_messages.txt", "r");
     if (!fp) {
         for (i = 0; i < MAX_DEVICES; i++) {
@@ -120,13 +125,17 @@ void restoreServer() {
             }
         }
     }
+    // nel file ho un vettore tridimensionale, ogni cella della matrice contiene due info: num 
+    // di messaggi pendenti e timestamp dell'ultimo messaggio
     for (i = 0; i < MAX_DEVICES; i++) {
+        // la prima casella di ogni riga la faccio fuori dal for per gestire il funzionamento
+        // della strtok che necessita prima del buffer da cui leggere e successivamente prende 'null'
         fgets(buff, sizeof(buff), fp);
         b = strtok(buff, " ");
         pend[i][0].num = atoi(b);
         b = strtok(NULL, " ");
         pend[i][0].lastMsgTimestamp = atoi(b);
-
+        // prima colonna già letta, comincio a leggere dalla seconda
         for (j = 1; j < MAX_DEVICES; j++) {
             b = strtok(NULL, " ");
             pend[i][j].num = atoi(b);
@@ -137,12 +146,16 @@ void restoreServer() {
     fclose(fp);
 }
 
+// funzione chiamata per registrare login (login a true) e logout (login a false)
 void registerLog(bool login, int id, int ts) {
+    // se non esiste la cartella che gestisce il registro la creo
     char dir_path[15];
     sprintf(dir_path, "./log_register");
     if (stat(dir_path, &st) == -1)
         mkdir(dir_path, 0700);
     char filename[WORD_SIZE];
+    // per ogni dispositivo ho un file che indica porta di accessso, ts login e ts logout
+    // se un dispositivo esce con ctrl-c il suo ts di logout non viene registrato
     sprintf(filename, "%s/dev_%d.txt", dir_path, id);
     FILE* fp = fopen(filename, "a");
     if (fp) {
@@ -155,8 +168,7 @@ void registerLog(bool login, int id, int ts) {
     }
 }
 
-// prende in ingresso l'username di un dispositivo e restituisce
-// il suo id
+// prende in ingresso l'username di un dispositivo e restituisce il suo id
 int findDevice(char* username) {
     int i = 0;
     struct device* dev;
@@ -183,7 +195,7 @@ void devAdd(char username[1024], char password[1024]) {
     nDev++;
 }
 
-
+// chiamata per notificare a un dispositivo che aveva lasciato un messaggio pendente che il messaggio è stato letto
 void notifyShow(int id) {
     sleep(1);
     int sd;
@@ -193,6 +205,7 @@ void notifyShow(int id) {
         printf("[SHOW] %d is offline, i'll notify the show when it come back\n", id);
         dev->notify = true;
     }
+    // si limita a inviare un numero
     sendNum(sd, COMMAND_SHOW);
     close(sd);
 }
