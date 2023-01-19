@@ -48,9 +48,11 @@ struct pending {
     time_t lastMsgTimestamp;
 }pend[MAX_DEVICES][MAX_DEVICES];
 
-/*----------------------------------------------------------------------*\
-|                  ***     FUNZIONI GENERALI     ***                     |
-\*----------------------------------------------------------------------*/
+
+/*--**********************************--*\
+|       *** FUNZIONI GENERALI ***        |
+\*--**********************************--*/
+
 
 void fdtInit() {
     FD_ZERO(&master);
@@ -71,7 +73,7 @@ void timestampTranslate(time_t timestamp, char* buf) {
 // avvio del server, controllo se esiste un file da cui recuperare informazioni precendenti
 void restoreServer() {
     int i, j;
-    char buff[1024], *eptr; // eptr necessario per la conversione da stringa a unsigned di ts
+    char buff[1024], * eptr; // eptr necessario per la conversione da stringa a unsigned di ts
     char* b;
     FILE* fp = fopen("restoreServer.txt", "r");
 
@@ -85,7 +87,7 @@ void restoreServer() {
     for (i = 0; i < nDev; i++) {
         fgets(buff, sizeof(buff), fp);
         struct device* d = &devices[i];
-        //use strtok() to get buffer values 
+        //uso strtok() per ottenere i valori dal buffer
 
         b = strtok(buff, " ");
         d->id = atoi(b);                        //id
@@ -113,7 +115,7 @@ void restoreServer() {
         d->port = atoi(b);                       //port
     }
     fclose(fp);
-    
+
     // controllo se ho un file che indica i messaggi pendenti tra gli utenti
     fp = fopen("pending_messages.txt", "r");
     if (!fp) {
@@ -219,16 +221,22 @@ void devUpdate(int id, int port, int sd) {
     dev->busy = false;
     dev->port = port;
     dev->timestampLogin = time(NULL);
+
+    // dev->notify era salvata nel file di restore o nelle strutture dati del server, se è a valore a true
+    // qualcuno ha letto i messaggi che il dispositivo aveva lasciato pendenti mentre il dispositivo era offline
     if (dev->notify) {
         notifyShow(id);
     }
-    dev->online = true;
     dev->notify = false;
+
+    dev->online = true;
     if (recvNum(sd, &code) == ERROR_CODE) {
         printf("<ERROR> [IN] Something wrong happened...\n");
         close(sd);
         return;
     }
+    // il dispositivo aveva effettuato un logout mentre il server era offline, aveva salvato il timestamp
+    // e me lo notifica così che il server possa aggiornare il registro
     if (code == NOTIFY_LOGOUT_TS) {
         printf("Command received : [LOGOUT TS]\n");
         recvFile(sd, "txt");
@@ -254,7 +262,7 @@ int signupControl(char username[1024]) {
     return 0;
 }
 
-// controll che i dati inseriti in fase di login siano corretti
+// controlla che i dati inseriti in fase di login siano corretti
 int loginCheck(char username[1024], char password[1024]) {
     int i;
     struct device* dev;
@@ -275,6 +283,7 @@ int loginCheck(char username[1024], char password[1024]) {
     return -1;
 }
 
+// funzione chiamata quando è necessario creare un socket di ascolto
 int creaSocket() {
     int ret, sd;
     struct sockaddr_in my_addr;
@@ -301,11 +310,32 @@ int creaSocket() {
     return sd;
 }
 
+// chiamata quando si nota che un dispositivo voleva iniziare una chat con un dispositivo non disponibile
+// aggiunge il socket di comunicazione con il dispositivo tra quelli ascoltati
+void prepareChatOffline(int sd, int rId) {
+    int sId;
+    FD_SET(sd, &master);
+    if (sd > fdmax) { fdmax = sd; }
+    recvNum(sd, &sId);
+    if (sId == ERROR_CODE) {
+        printf("<ERROR> Something wrong happened...\n");
+        close(sd);
+        //handleDevCrash(sd);
+        return;
+    }
+    devices[sId].chatSD = sd;
+    devices[sId].rId = rId;
+    devices[sId].busy = 1;
+}
+
 
 /*----------------------------------------------------------------------*\
 |                     ***     COMANDI SERVER     ***                     |
 \*----------------------------------------------------------------------*/
 
+// funzione chiamata in risposta al comando LIST
+// stampa l'elenco dei dispositivi online con il formato:
+// username     port    timestampLogin
 void commandList() {
     int i;
     struct device* dev;
@@ -313,17 +343,19 @@ void commandList() {
     for (i = 0; i < nDev; i++) {
         dev = &devices[i];
         if (dev->online)
-            // username     port    timestampLogintore
             printf("%s\t\t%u\t%d\n", dev->username, dev->port, (unsigned)dev->timestampLogin);
     }
 }
 
+// funzione chiamata in risposta al comando HELP
 void commandHelp() {
     printf("Choose operation:\n"
         "- list -> print a list of the users online\n"
         "- esc -> turn off the server\n");
 }
 
+// funzione chiamata in risposta al comando ESC
+// salva i dati utili riguardanti i dispositivi in un file
 void commandEsc() {
     int i, j;
     FILE* fp = fopen("restoreServer.txt", "w");
@@ -331,7 +363,7 @@ void commandEsc() {
     fprintf(fp, "%d\n", nDev);
     for (i = 0; i < nDev; i++) {
         dev = &devices[i];
-        //copy network status in a file
+        // salva i valori utili dei descrittori dei dispositivi per poterli recuperare al prossimo avvio
         fprintf(fp, "%d %s %s %u %d %d %d\n",
             dev->id, dev->username,
             dev->password, (unsigned)dev->timestampLogin,
@@ -340,6 +372,7 @@ void commandEsc() {
         );
     }
     fclose(fp);
+    // salvo su un file a parte i numeri di messaggi pendenti tra gli utenti e il timestamp dell'ultimo in forma matriciale
     fp = fopen("pending_messages.txt", "w");
     for (i = 0; i < MAX_DEVICES; i++) {
         for (j = 0; j < MAX_DEVICES; j++) {
@@ -353,6 +386,8 @@ void commandEsc() {
 /*----------------------------------------------------------------------*\
 |                     ***     COMANDI CLIENT     ***                     |
 \*----------------------------------------------------------------------*/
+
+// funzione chiamata in risposta al comando ricevuto dal dispositivo LOGIN
 void login(sd) {
     char username[1024];
     char password[1024];
@@ -389,6 +424,7 @@ void login(sd) {
     }
 }
 
+// funzione chiamata in risposta al comando ricevuto dal dispositivo SIGNUP
 void signup(sd) {
     char username[1024];
     char password[1024];
@@ -412,9 +448,10 @@ void signup(sd) {
     }
 }
 
+// funzione chiamata in risposta al comando ricevuto dal dispositivo HANGING
 void hanging(int sd) {
     struct tm ts;
-    char emptyLine[] = "\n";
+    char emptyLine[] = "\n"; // utilizzato per segnalare la fine della comunicazione
     int i, id;
     recvNum(sd, &id);
     if (id == ERROR_CODE) {
@@ -424,6 +461,7 @@ void hanging(int sd) {
         return;
     }
     char buf[80];
+    // il server invia uno per uno username, numero di messaggi e timestamp dell'ultimo
     for (i = 0; i < MAX_DEVICES; i++) {
         if (pend[i][id].num != 0) {
             sendMsg(sd, devices[i].username);
@@ -436,22 +474,9 @@ void hanging(int sd) {
     sendMsg(sd, emptyLine);
     printf("<HANGING> All hanging devices sent\n");
 }
-void prepareChatOffline(int sd, int rId) {
-    int sId;
-    FD_SET(sd, &master);
-    if (sd > fdmax) { fdmax = sd; }
-    recvNum(sd, &sId);
-    if (sId == ERROR_CODE) {
-        printf("<ERROR> Something wrong happened...\n");
-        close(sd);
-        //handleDevCrash(sd);
-        return;
-    }
-    devices[sId].chatSD = sd;
-    devices[sId].rId = rId;
-    devices[sId].busy = 1;
-}
 
+// funzione chiamata alla ricezione dei comandi CHAT e \a
+// riceve in ingeresso un username ed invia ii valori dell'id e della porta del dispositivo relativo
 int deviceData(sd) {
     char username[1024];
     int rId;
@@ -463,6 +488,8 @@ int deviceData(sd) {
         return -2;
     }
     rId = findDevice(username);
+    // in caso di username non esistente, dispotivo offline o busy viene segnalato nei valori inviati
+
     if (rId == -1) {
         printf("[CHAT] User '%s' not found\n", username);
         sendNum(sd, USER_NOT_FOUND);
@@ -487,13 +514,15 @@ int deviceData(sd) {
     return -1;
 }
 
-
-// ricordare di gestire il caso di crash del dispositivo
+// funzione chiamata in risposta al comando ricevuto dal dispositivo SHOW
+// riceve l'username del dispositivo che ha inviato i messaggi e l'id del dispositivo che li ha ricevuti
+// invia il file relativo ai messaggi pendenti 
 void show(sd) {
     int rId, sId;
     char sUsername[1024], filename[1024];
     recvNum(sd, &rId);
     recvMsg(sd, sUsername);
+    // ottengo l'id del dispositivo controllando l'username
     sId = findDevice(sUsername);
     sprintf(filename, "./pending_messages/device_%d/from_%d.txt", rId, sId);
     printf("[SHOW] Sending %s...\n", filename);
@@ -510,11 +539,14 @@ void show(sd) {
     remove(filename);
     pend[sId][rId].lastMsgTimestamp = 0;
     pend[sId][rId].num = 0;
+    // notifico al dispositivo che aveva inviato i messaggi che i messaggi sono stait letti
     notifyShow(sId);
 }
 
+// funzione chiamata in risposta al comando ricevuto dal dispositivo OUT
 int out(sd) {
     int id;
+    // riceve l'id del dispositivo andato offline
     recvNum(sd, &id);
     if (id == ERROR_CODE) {
         printf("<ERROR> Something wrong happened\n");
@@ -525,14 +557,16 @@ int out(sd) {
     devices[id].online = false;
 
     printf("[OUT] Dev %d is now offline\n", id);
+    // registro l'orario attuale come istante in cui il dispositivo è andato offline
     registerLog(false, id, (unsigned)time(NULL));
     return id;
 }
 
-
+// funzione chiamata in risposta al comando ricevuto dal dispositivo \u
+// invia al dispositivo la lista dei dispositivi online, uno per uno
 void usernameOnline(sd) {
     int i;
-    char emptyLine[] = "\n";
+    char emptyLine[] = "\n"; // utilizzato per indicare che la lista è terminata
     for (i = 0; i < nDev; i++) {
         if (devices[i].online) {
             sendMsg(sd, devices[i].username);
@@ -541,9 +575,10 @@ void usernameOnline(sd) {
     // il dispotivo sa da protocollo che quando ottiene una riga vuota significa
     // che non ci sono ulteriori dispositivi online oltre a quelli già inviati
     sendMsg(sd, emptyLine);
-    printf("[OUT] All online users were sent\n");
+    printf("[USER ONLINE] All online users were sent\n");
 }
 
+// funzione che riceve il numero di comando inviato dal dispositivo e svolge le funzioni relative in risposta
 void recvCommand(int sd) {
     int command;
     int id; // usato per la busy e not busy
@@ -592,26 +627,27 @@ void recvCommand(int sd) {
         printf("Command received : [DEVICE DATA]\n");
         usernameOnline(sd);
         break;
+    case USER_OFFLINE:
         // qualcuno voleva iniziare una chat con un dispositivo ma non risponde, considero la destinazione
         // offline e inizio una chat con il chiamante
-    case USER_OFFLINE:
         printf("Command received : [DEVICE CRASHED]]\n");
         id = out(sd); // la out restituisce l'id del dispositivo disconnesso
         if (id == ERROR_CODE)
             return;
         prepareChatOffline(sd, id);
         break;
+    // dispositivo segnala di essere passato a busy
     case COMMAND_BUSY:
         recvNum(sd, &id);
         if (id == ERROR_CODE) {
             printf("<ERROR> Something wrong happened\n");
             close(sd);
-            //handleDevCrash(sd);
             return;
         }
         devices[id].busy = true;
         printf("Command received : %d is busy\n", id);
         break;
+    // dispositivo segnala di non essere più busy
     case COMMAND_NOT_BUSY:
         recvNum(sd, &id);
         if (id == ERROR_CODE) {
@@ -629,6 +665,7 @@ void recvCommand(int sd) {
     }
 }
 
+// legge i comandi da tastiera ricevuti dal server
 void readCommand() {
     char command[20];
     scanf("%s", command);
@@ -649,10 +686,10 @@ void readCommand() {
 
 void handleChat(int sd) {
 
-    char path[1024], filename[1024];
-    char msg[1024];
+    char path[1024], filename[1024], msg[1024];
     int sId, rId, i;
     struct device* dev;
+    // cerco il dispositivo che mi ha scritto confrontando il socket da cui mi scrive con quelli salvati
     for (i = 0; i < nDev; i++) {
         dev = &devices[i];
         if (dev->chatSD == sd) {
@@ -661,6 +698,7 @@ void handleChat(int sd) {
         }
     }
     rId = dev->rId;
+    // dipositivo in chat è crashato
     if (recvMsg(sd, msg) == ERROR_CODE) {
         printf("<ERROR> Something wrong happened\n");
         FD_CLR(dev->chatSD, &master);
@@ -668,6 +706,7 @@ void handleChat(int sd) {
         close(sd);
         return;
     }
+    // il dispositivo ha effettuato la disconnessione dalla chat, tolgo il socket da quelli ascoltati
     if (!strncmp(msg, "\\q", 2)) {
         FD_CLR(dev->chatSD, &master);
         close(dev->chatSD);
@@ -678,11 +717,12 @@ void handleChat(int sd) {
     if (stat(path, &st) == -1)
         mkdir(path, 0700);
 
-    //subdirectory for receiver
+    //subdirectory per il ricevitore
     sprintf(path, "./pending_messages/device_%d", rId);
     if (stat(path, &st) == -1)
         mkdir(path, 0700);
 
+    // salvo il messaggio ricevuto tra quelli pendenti
     sprintf(filename, "%s/from_%d.txt", path, sId);
     printf("[CHAT] Message saved in :\n\t%s\n", filename);
 
@@ -714,7 +754,8 @@ int main(int argc, char* argv[]) {
     printf("********************* SERVER AVVIATO ********************\n");
 
     switch (argc) {
-    case 1:
+    // se l'utente non ha inserito la porta le assegno di default la 4242
+    case 1: 
         thisPort = 4242;
         break;
     case 2:
@@ -724,7 +765,9 @@ int main(int argc, char* argv[]) {
         printf("Syntax error\n");
         exit(-1);
     }
+    // ristabilisco le informazioni presenti alla precedente disconnessione del server se presenti
     restoreServer();
+    // creo il socket di ascolto a cui potranno scrivere i dispositivi
     sd = creaSocket();
     ret = listen(sd, 10);
     if (ret < 0) {
@@ -741,6 +784,7 @@ int main(int argc, char* argv[]) {
             "- list\n"
             "- esc\n");
         read_fds = master;
+        // controllo quale socket ha ricevuto un messaggio
         if (select(fdmax + 1, &read_fds, NULL, NULL, NULL) == -1) {
             perror("[server] error: select() ");
             exit(-1);
